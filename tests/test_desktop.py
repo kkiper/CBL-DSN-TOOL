@@ -174,3 +174,14 @@ def test_open_wiring_list_csv(win, tmp_path):
     assert {c.ref for c in win.doc.design.connectors} == {"P1", "P2", "P3"}
     assert isinstance(win.canvas.scene.connectors["P1"], ConnectorItem)
     assert sample_design(W101).overall_length == 48 and ConnectorEnd
+
+
+def test_import_sample_library(win):
+    from cable_desktop.mainwindow import SAMPLE_LIBRARIES
+
+    for name in SAMPLE_LIBRARIES:
+        win.import_sample_library(name)
+    lib = win.doc.design.library
+    assert lib.get("D38999/26WD35SN").contacts == 37 and lib.get("M22759/32-22-9").awg == 22
+    win.doc.undo_stack.undo()
+    assert win.doc.design.library.get("M22759/32-22-9") is None

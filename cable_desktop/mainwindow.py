@@ -43,6 +43,11 @@ def resource_dir() -> Path:
     return base / "samples"
 
 
+SAMPLE_LIBRARIES = {
+    "d38999_series_iii.csv": "D38999 Series III connectors and M39029 contacts",
+    "m22759_wire.csv": "M22759/16 and /32 wire",
+}
+
 SAMPLES = {
     "Two-connector cable with shielded pair and splice (W101)": dict(
         wires="cable_wirelist.csv", parts="parts_library.csv", connectors="cable_connectors.csv",
@@ -141,6 +146,9 @@ class MainWindow(QMainWindow):
         for kind, label in (("connectors", "Connector table…"), ("groups", "Groups and shields…"),
                             ("splices", "Splice table…"), ("parts", "Parts library…")):
             self._act(imp, label, lambda _=False, k=kind: self.import_table(k))
+        sample_libs = imp.addMenu("Sample &library")
+        for name, label in SAMPLE_LIBRARIES.items():
+            self._act(sample_libs, label, lambda _=False, n=name: self.import_sample_library(n))
         f.addSeparator()
         self._act(f, "&Save", self.save_file, QKeySequence.Save)
         self._act(f, "Save &as…", self.save_as, QKeySequence.SaveAs)
@@ -218,6 +226,12 @@ class MainWindow(QMainWindow):
         self.canvas.auto_layout()
         self.doc.undo_stack.clear()
         self._update_title()
+
+    def import_sample_library(self, name: str):
+        path = resource_dir().parent / "libraries" / name
+        self.doc.import_table("parts", path)
+        self.statusBar().showMessage(f"Added {SAMPLE_LIBRARIES[name]} to the parts library (sample data: verify "
+                                     "values against current spec sheets)", 8000)
 
     def import_table(self, kind: str):
         path, _ = QFileDialog.getOpenFileName(self, f"Import {kind}", self._last_dir(), TABLE_FILTER)
