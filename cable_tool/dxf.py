@@ -113,14 +113,16 @@ class _Writer:
         self.pt(cx, cy)
         self.g(40, r * PT)
 
-    def text(self, layer, x, y, s, size, anchor):
+    def text(self, layer, x, y, s, size, anchor, rotation=0.0):
         s = _clean_text(s)
         if not s.strip():
             return
         self.common("TEXT", layer)
         self.pt(x, y)
-        self.g(40, size * 0.72 * PT)    # cap height
+        self.g(40, size * 0.718 * PT)   # cap height = ASME letter height
         self.g(1, s)
+        if rotation:
+            self.g(50, float(rotation))
         h = {"start": 0, "middle": 1, "end": 2}[anchor]
         if h:
             self.g(72, h)
@@ -157,7 +159,7 @@ def _walk(w: _Writer, group: Group, dx: float, dy: float, s: float, layer: str) 
             elif it.stroke:
                 w.polyline(layer, pts, closed=it.closed, dashed=bool(it.dash))
         elif isinstance(it, Text):
-            w.text(layer, X(it.x), Y(it.y), it.s, it.size * s, it.anchor)
+            w.text(layer, X(it.x), Y(it.y), it.s, it.size * s, it.anchor, it.rotation)
 
 
 def sheet_to_dxf(sheet: Sheet) -> str:

@@ -280,7 +280,8 @@ if not design.wires:
     st.info("Load a wiring list (or a sample), or type wires into the Wire list tab, to check and draw the design.")
     st.stop()
 
-report = run_drc(design)
+sheets, layout_msgs = build_drawing(design, sheet_size)
+report = run_drc(design, sheets)
 counts = report.counts()
 r1, r2, r3, r4 = st.columns(4)
 r1.metric("Errors", counts[ERROR])
@@ -305,9 +306,8 @@ if not view.empty:
 # ---------------------------------------------------------------------------
 st.subheader("4. Drawing")
 bom = build_bom(design)
-sheets, layout_msgs = build_drawing(design, sheet_size)
 for m in layout_msgs:
-    st.warning(m)
+    st.info(m)
 
 stem = (tb.drawing_number or "cable").replace("/", "_").replace(" ", "_")
 svgs = [sheet_to_svg(s) for s in sheets]

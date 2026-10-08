@@ -98,36 +98,50 @@ def test_side_assignment():
 
 @pytest.mark.parametrize("size", list(SHEET_SIZES))
 def test_drawing_sheets(size):
+    from cable_tool.asme import larger_sizes
+    from cable_tool.drc import run_drc
+
     design = two_connector_design()
     design.title_block.drawing_number = "W101-001"
     sheets, warnings = build_drawing(design, size)
-    assert len(sheets) == 3 and not warnings
+    used = sheets[0].meta["sheet_size"]
+    assert used in larger_sizes(size)                      # never smaller than asked for
+    assert not any("too small" in w for w in warnings)
+    n = len(sheets)
+    assert n >= 3
     svg1 = sheet_to_svg(sheets[0])
-    for text in ("D38999/26WD18SN", "BILL OF MATERIALS", "48 IN", "W101-001", "1 OF 3", "W101-P1", "SP1 @ 6 IN FROM P2"):
-        assert text in svg1
+    for text in ("D38999/26WD18SN", "PARTS LIST", "FIND NO", "NOMENCLATURE OR DESCRIPTION", ">48<", "W101-001",
+                 f"1 OF {n}", "W101-P1", ">SP1<", "REVISIONS", "INITIAL RELEASE", "UNLESS OTHERWISE SPECIFIED:",
+                 "THIRD ANGLE PROJECTION", "APPLICATION"):
+        assert text in svg1, text
     svg2 = sheet_to_svg(sheets[1])
     assert "RS422 TX+" in svg2 and "W3  22 AWG  WHT" in svg2
-    svg3 = sheet_to_svg(sheets[2])
+    tables = "".join(sheet_to_svg(sh) for sh in sheets[2:])
     for text in ("LABEL SCHEDULE", "WIRE GROUPS AND SHIELDS", "SHIELDED TWISTED PAIR", "P1: BACKSHELL", "P2: PIN 11",
                  "SPLICES", "6 IN FROM P2 FACE"):
-        assert text in svg3
+        assert text in tables
+    # Every text item meets the ASME Y14.2 minimum letter height
+    fmt = [f for f in run_drc(design, sheets).findings if f.rule == "Drawing format"]
+    assert not any("below the ASME" in f.message for f in fmt)
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(sheets_to_pdf(sheets)))
-    assert len(reader.pages) == 3
-    w, h = SHEET_SIZES[size][1:]
+    assert len(reader.pages) == n
+    w, h = SHEET_SIZES[used][1:]
     assert abs(float(reader.pages[0].mediabox.width) - w) < 1 and abs(float(reader.pages[0].mediabox.height) - h) < 1
-    assert "BILL OF MATERIALS" in reader.pages[0].extract_text()
+    assert "PARTS LIST" in reader.pages[0].extract_text()
 
 
 def test_long_wire_list_continues_on_more_sheets():
     wires = [Wire(f"W{i}", "P1", str(i), "P2", str(i), wire_pn="M22759/16-22-9", label_pn="M1") for i in range(1, 121)]
     design = CableDesign(connectors=[ConnectorEnd("P1", "C1"), ConnectorEnd("P2", "C2")], wires=wires, overall_length=24)
-    sheets, _ = build_drawing(design)
-    assert len(sheets) > 3
+    sheets, warnings = build_drawing(design, auto_size=False)
+    assert len(sheets) > 3 and any("too small" in w for w in warnings)
     joined = "".join(sheet_to_svg(s) for s in sheets[2:])
     assert "WIRE LIST (CONTINUED)" in joined and ">W120<" in joined
     assert f"{len(sheets)} OF {len(sheets)}" in sheet_to_svg(sheets[-1])
+    big, _ = build_drawing(design)        # automatic sizing moves up until the 120-row diagram fits
+    assert big[0].meta["sheet_size"] != "ANSI B (17 x 11 in)"
 
 
 def test_project_round_trip():
@@ -187,12 +201,13 @@ def test_cable_app_runs():
     at.button[0].click().run()
     assert not at.exception
     errors, warnings, info, bundle = (m.value for m in at.metric)
-    assert (errors, warnings) == ("0", "2")   # the 3/8 in label sleeve is too big for the P2 and P3 legs
+    assert errors == "0"
     assert bundle == "0.167 in"
     drc = next(d.value for d in at.dataframe if "Severity" in d.value.columns)
-    assert set(drc["Rule"]) == {"Label fit"}
+    assert set(drc["Rule"]) - {"Drawing format"} == {"Label fit"}   # 3/8 in label too big for P2/P3 legs
+    assert "Drawing format" in set(drc["Rule"])                     # e.g. no DRAWN name in the title block
     at.selectbox(key="sample").select("Two-connector cable with shielded pair and splice (W101)").run()
     at.button[0].click().run()
     assert not at.exception
-    assert [m.value for m in at.metric][:2] == ["0", "1"]   # only the jumper's unknown length
+    assert at.metric[0].value == "0"
     assert [d.label for d in at.get("download_button")][:2] == ["Drawing (.pdf)", "CAD sheets (.dxf, zipped)"]

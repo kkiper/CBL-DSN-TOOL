@@ -1,6 +1,9 @@
 """Backend-neutral vector drawing, rendered to SVG or PDF.
 
 Coordinates are points (1/72 in) with the origin at the top-left and y increasing downward.
+
+Stroke widths below ``asme.PEN_MAX`` are pen weights: they are drawn at that absolute width whatever the
+group scale (ASME Y14.2 line weights). Wider strokes are geometry (e.g. a cable body) and scale with the view.
 """
 
 from __future__ import annotations
@@ -10,6 +13,8 @@ from dataclasses import dataclass, field
 from xml.sax.saxutils import escape
 
 from reportlab.pdfbase.pdfmetrics import stringWidth
+
+from .asme import ARROW_HALF_ANGLE, ARROW_LENGTH, PEN_MAX
 
 FONT = "Helvetica"
 FONT_BOLD = "Helvetica-Bold"
@@ -80,6 +85,8 @@ class Text:
     anchor: str = "start"   # start | middle | end
     bold: bool = False
     color: str = "#000000"
+    role: str = "general"   # ASME letter-height class: general | heading | title | zone
+    rotation: float = 0.0   # degrees, counter-clockwise as seen on the sheet
 
 
 @dataclass
@@ -116,12 +123,12 @@ class Group:
         pts = [(cx + rx * math.cos(2 * math.pi * i / n), cy + ry * math.sin(2 * math.pi * i / n)) for i in range(n)]
         return self.add(Poly(pts, closed=True, **kw))
 
-    def arrow(self, x, y, toward_x, toward_y, size=6.0):
-        """Filled arrowhead with its tip at (x, y), pointing away from (toward_x, toward_y)."""
+    def arrow(self, x, y, toward_x, toward_y, size=ARROW_LENGTH):
+        """Filled 3:1 arrowhead (ASME Y14.5) with its tip at (x, y), pointing away from (toward_x, toward_y)."""
         import math
 
         ang = math.atan2(y - toward_y, x - toward_x)
-        a1, a2 = ang + math.radians(160), ang - math.radians(160)
+        a1, a2 = ang + math.radians(180 - ARROW_HALF_ANGLE), ang - math.radians(180 - ARROW_HALF_ANGLE)
         self.poly([(x, y), (x + size * math.cos(a1), y + size * math.sin(a1)),
                    (x + size * math.cos(a2), y + size * math.sin(a2))], closed=True, fill="#000000", width=0.5)
 
@@ -173,6 +180,7 @@ class Sheet:
     height: float
     root: Group = field(default_factory=Group)
     name: str = ""
+    meta: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +190,17 @@ def _num(v: float) -> str:
     return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
-def _svg_items(group: Group, out: list[str]) -> None:
+def _pen(width: float, scale: float) -> float:
+    """Stroke width to write in a group with cumulative ``scale`` so pen weights stay absolute."""
+    return width / scale if width < PEN_MAX else width
+
+
+def _svg_items(group: Group, out: list[str], scale: float = 1.0) -> None:
     for it in group.items:
         if isinstance(it, Line):
             dash = f' stroke-dasharray="{",".join(_num(d) for d in it.dash)}"' if it.dash else ""
             out.append(f'<line x1="{_num(it.x1)}" y1="{_num(it.y1)}" x2="{_num(it.x2)}" y2="{_num(it.y2)}" '
-                       f'stroke="{it.color}" stroke-width="{_num(it.width)}"{dash}/>')
+                       f'stroke="{it.color}" stroke-width="{_num(_pen(it.width, scale))}"{dash}/>')
         elif isinstance(it, Poly):
             tag = "polygon" if it.closed else "polyline"
             pts = " ".join(f"{_num(x)},{_num(y)}" for x, y in it.points)
@@ -195,20 +208,21 @@ def _svg_items(group: Group, out: list[str]) -> None:
             if it.dash:
                 join += f' stroke-dasharray="{",".join(_num(d) for d in it.dash)}"'
             out.append(f'<{tag} points="{pts}" fill="{it.fill or "none"}" stroke="{it.stroke or "none"}" '
-                       f'stroke-width="{_num(it.width)}"{join}/>')
+                       f'stroke-width="{_num(_pen(it.width, scale))}"{join}/>')
         elif isinstance(it, Rect):
             out.append(f'<rect x="{_num(it.x)}" y="{_num(it.y)}" width="{_num(it.w)}" height="{_num(it.h)}" '
-                       f'fill="{it.fill or "none"}" stroke="{it.stroke or "none"}" stroke-width="{_num(it.width)}"/>')
+                       f'fill="{it.fill or "none"}" stroke="{it.stroke or "none"}" stroke-width="{_num(_pen(it.width, scale))}"/>')
         elif isinstance(it, Circle):
             out.append(f'<circle cx="{_num(it.cx)}" cy="{_num(it.cy)}" r="{_num(it.r)}" '
-                       f'fill="{it.fill or "none"}" stroke="{it.stroke or "none"}" stroke-width="{_num(it.width)}"/>')
+                       f'fill="{it.fill or "none"}" stroke="{it.stroke or "none"}" stroke-width="{_num(_pen(it.width, scale))}"/>')
         elif isinstance(it, Text):
             weight = ' font-weight="bold"' if it.bold else ""
+            rot = f' transform="rotate({_num(-it.rotation)} {_num(it.x)} {_num(it.y)})"' if it.rotation else ""
             out.append(f'<text x="{_num(it.x)}" y="{_num(it.y)}" font-size="{_num(it.size)}" '
-                       f'text-anchor="{it.anchor}" fill="{it.color}"{weight}>{escape(it.s)}</text>')
+                       f'text-anchor="{it.anchor}" fill="{it.color}"{weight}{rot}>{escape(it.s)}</text>')
         elif isinstance(it, Group):
             out.append(f'<g transform="translate({_num(it.dx)} {_num(it.dy)}) scale({it.scale:.5f})">')
-            _svg_items(it, out)
+            _svg_items(it, out, scale * it.scale)
             out.append("</g>")
 
 
@@ -238,12 +252,12 @@ def _pdf_items(c, group: Group, dx: float, dy: float, s: float, page_h: float) -
     for it in group.items:
         if isinstance(it, Line):
             c.setStrokeColor(_hex(it.color))
-            c.setLineWidth(it.width * s)
+            c.setLineWidth(it.width if it.width < PEN_MAX else it.width * s)
             c.setDash([d * s for d in it.dash] if it.dash else [])
             c.line(X(it.x1), Y(it.y1), X(it.x2), Y(it.y2))
             c.setDash([])
         elif isinstance(it, (Poly, Rect, Circle)):
-            c.setLineWidth(it.width * s)
+            c.setLineWidth(it.width if it.width < PEN_MAX else it.width * s)
             if it.fill:
                 c.setFillColor(_hex(it.fill))
             if it.stroke:
@@ -270,8 +284,16 @@ def _pdf_items(c, group: Group, dx: float, dy: float, s: float, page_h: float) -
         elif isinstance(it, Text):
             c.setFillColor(_hex(it.color))
             c.setFont(FONT_BOLD if it.bold else FONT, it.size * s)
-            draw = {"start": c.drawString, "middle": c.drawCentredString, "end": c.drawRightString}[it.anchor]
-            draw(X(it.x), Y(it.y), it.s)
+            if it.rotation:
+                c.saveState()
+                c.translate(X(it.x), Y(it.y))
+                c.rotate(it.rotation)
+                draw = {"start": c.drawString, "middle": c.drawCentredString, "end": c.drawRightString}[it.anchor]
+                draw(0, 0, it.s)
+                c.restoreState()
+            else:
+                draw = {"start": c.drawString, "middle": c.drawCentredString, "end": c.drawRightString}[it.anchor]
+                draw(X(it.x), Y(it.y), it.s)
         elif isinstance(it, Group):
             _pdf_items(c, it, X(it.dx), dy + it.dy * s, s * it.scale, page_h)
 
