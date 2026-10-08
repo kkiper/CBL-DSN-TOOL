@@ -146,6 +146,8 @@ class CableDesign:
     part_descriptions: dict[str, str] = field(default_factory=dict)
     library: PartsLibrary = field(default_factory=PartsLibrary)
     revisions: list[Revision] = field(default_factory=list)
+    layout: dict[str, tuple[float, float]] = field(default_factory=dict)   # canvas positions by ref (desktop app)
+    sheet_size: str = "ANSI B (17 x 11 in)"                                # smallest drawing sheet size
     units: str = "IN"
     tolerance: str = "0.5"
     overall_length: float | None = None   # used for two-connector cables when ends have no lengths
