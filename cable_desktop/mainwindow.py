@@ -321,11 +321,35 @@ class MainWindow(QMainWindow):
             e.ignore()
 
 
+def smoke_test(out_dir: str) -> int:
+    """Headless check used by CI on the packaged app: open a sample, check it, export everything."""
+    from .dialogs import export_package
+    from cable_tool.drc import run_drc
+    from cable_tool.drawing import build_drawing
+
+    doc = Document(sample_design(next(iter(SAMPLES))))
+    sheets, _ = build_drawing(doc.design, doc.design.sheet_size)
+    report = run_drc(doc.design, sheets)
+    written = export_package(doc, Path(out_dir), "smoke", {"pdf", "dxf", "svg", "bom", "drc", "xlsx"})
+    print(f"{len(sheets)} sheets, {report.counts()}, {len(written)} files written to {out_dir}")
+    return 0 if written and report.counts()["ERROR"] == 0 else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv if argv is None else argv
+    if "--smoke-test" in argv:
+        i = argv.index("--smoke-test")
+        out = argv[i + 1] if len(argv) > i + 1 else "smoke-test-output"
+        app = QApplication.instance() or QApplication(argv)
+        return smoke_test(out)
     app = QApplication.instance() or QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("CableDesigner")
+    icon = resource_dir().parent / "packaging" / "icon.png"
+    if icon.exists():
+        from PySide6.QtGui import QIcon
+
+        app.setWindowIcon(QIcon(str(icon)))
     win = MainWindow()
     files = [a for a in argv[1:] if not a.startswith("-")]
     if files:

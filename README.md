@@ -1,37 +1,94 @@
-# Cable Drawing Tool
+# Cable Designer
 
-Turns a wiring list plus your **connector, contact, backshell, heatshrink, label and wire part numbers** into a
-cable assembly drawing package, with twisted pairs, shields, splices, a parts library, and a design rule check (DRC).
-The drawing exports as PDF, SVG, or DXF.
+Design cable assemblies and harnesses on a canvas, and get an **ASME Y14-format drawing package** (PDF, DXF, SVG)
+with a parts list, wiring diagram, wire list, and a design rule check (DRC) driven by your parts library.
+
+- **Desktop app** (Windows / macOS / Linux): a Splice CAD–style harness editor. Drag connectors and parts from the
+  library, wire pin to pin, group wires into twisted pairs and shields, add splices. The DRC and the drawing update
+  as you work.
+- **Command line** and a **web app** (Streamlit) using the same engine, for batch runs and quick browser use.
 
 | Sheet | Contents |
 |---|---|
-| 1 | Assembly view (connectors, backshells, heatshrink boots, ID labels, splices, lengths, item balloons), bill of materials, notes |
-| 2 | Wiring diagram: a pin-out table per connector; wires drawn pin to pin or to splice nodes; twisted-pair marks, shield and cable-jacket outlines, and shield terminations (to backshell, drain to a pin, or floating) |
-| 3+ | Wire list, wire groups and shields, splices, and label schedule (continued onto more sheets if needed) |
+| 1 | Assembly view (connectors, backshells, boots, ID labels, splices, dimensions, find-number balloons, flag notes), parts list, general and flag notes, revision block, application block, tolerance block, title block |
+| 2 | Wiring diagram: a pin-out table per connector; wires pin to pin or to splice nodes; twisted-pair marks, shield and cable-jacket outlines, and shield terminations (to backshell, drain to a pin, or floating) |
+| 3+ | Wire list, wire groups and shields, splices, label schedule, and any parts-list continuation |
 
-Every sheet has a zoned border and a title block. Sheet sizes: ANSI B, C and D, and ISO A3, A2 and A1.
+## Desktop app
+
+**Install:** download `CableDesigner-x.y.z-setup.exe` (Windows installer, which also associates `.cbl` files) or
+`CableDesigner-macos.zip` from the repository's GitHub Releases. Neither needs Python. To run from source instead:
 
 ```bash
-streamlit run cable_app.py
+pip install -r requirements-desktop.txt
+python -m cable_desktop                # or: python -m cable_desktop project.cbl
 ```
 
-1. Upload a wiring list (or load a sample) and, optionally, your **parts library**. Set the title block in the sidebar.
-2. Fill in the tabs: **Connectors**, **Groups & shields**, **Splices**, **Parts library**, **Notes**. Connectors, groups,
-   splices and part numbers named in the wire list get rows automatically.
-3. Review the **design rule check**, preview the sheets, and download the PDF, DXF, SVG, BOM, DRC report, or
-   **Save project (.xlsx)**. Upload the saved project later to continue where you left off.
+**Working on the canvas** (centre, *Harness* tab):
 
-Command line:
+- **Add connectors** by dragging a connector part from the **Library** panel onto the canvas, or with *+ Connector*.
+  The pin count comes from the part's *Contacts* in the library.
+- **Wire** by dragging from one pin's port to another pin (or a splice). New wires use the *New wire* P/N in the
+  toolbar, and gauge and colour come from the library.
+- **Assign parts** by dropping a backshell, boot, label or contact onto a connector, or a wire, marker, sleeve or
+  cable part onto a wire.
+- **Group wires:** select wires, right-click, *Group as* twisted pair, shielded twisted pair, shielded, or jacketed
+  cable. Set the shield terminations in the *Groups and shields* table.
+- **Splices:** *+ Splice* or drop a splice part, then wire to it. Set *Near* / *Distance* in the *Splices* table to
+  locate it.
+- **Tables** at the bottom show the same data as a spreadsheet. **Properties** (right) edits the selected item.
+  Renaming a connector, splice, group or part updates every reference to it.
+- **Design rule check** runs as you edit. Items with errors are outlined red on the canvas, warnings amber.
+  Double-click a finding to jump to the item.
+- The **Drawing** tab previews every sheet. *Smallest sheet* sets the starting size (see below).
+- *Design → Title block, revisions and notes* (Ctrl+T) fills the title block, application block, revision
+  history and general notes. *File → Export drawing package* (Ctrl+E) writes PDF, DXF, SVG, BOM, DRC report and the
+  project workbook.
+- Every edit can be undone. Projects save as `.cbl` (JSON, including canvas positions). *File → Open* also reads
+  wiring lists and project workbooks (`.xlsx`, `.csv`), and *File → Import* merges connector, group, splice and
+  library tables into the open project. *File → Open sample* has two worked examples.
+
+## Drawing format (ASME)
+
+The drawings follow the ASME Y14 series as commonly applied. `cable_tool/asme.py` holds every value used, so you
+can match your organization's edition and drafting manual.
+
+| Standard | What the drawing does |
+|---|---|
+| Y14.1 | Sheet sizes ANSI B–E (ISO A3–A0), zoned border, full title block on sheet 1, continuation title block on later sheets, reverse-oriented drawing-number block |
+| Y14.1 / Y14.100 | Title block with design activity, CAGE code, drawing number, size, revision, scale, weight, sheet n of m, contract number, and DRAWN / CHECKED / ENGR / APPROVED names and dates. Application block (NEXT ASSY / USED ON) and proprietary/distribution statement |
+| Y14.2 | Minimum letter heights: 0.24 in title, drawing number and zone letters; 0.12 in all other text; 0.10 in block headings. Line weights: thick 0.6 mm (outlines, borders), thin 0.3 mm (dimensions, leaders, tables) |
+| Y14.5 | "UNLESS OTHERWISE SPECIFIED" block (units, tolerance, interpret per Y14.5, do not scale) with the third-angle projection symbol. 3:1 arrowheads; lengths and splice locations dimensioned from the connector face; units not repeated on dimensions |
+| Y14.34 | Parts list above the title block, reading upward: FIND NO, QTY REQD, CAGE CODE, PART OR IDENTIFYING NO, NOMENCLATURE OR DESCRIPTION, NOTE. Find-number balloons on the assembly view |
+| Y14.35 | Revision block (ZONE, REV, DESCRIPTION, DATE, APPROVED) from the project's revision history |
+| Y14.100 | Numbered general notes, plus flag notes (number in a triangle) at the feature, in the notes, and in the parts-list NOTE column |
+| Y14.15 | Wiring-diagram conventions: connector pin-out tables, splice nodes, twisted pairs, shields with their terminations and the chassis-ground symbol |
+
+**Text is never shrunk below the minimum letter height.** When the views or tables don't fit the chosen sheet at
+that height, the drawing moves to the next size (B → C → D → E, or A3 → A2 → A1 → A0) and says so. `--fixed-size`
+(CLI) keeps the requested size instead and reports the undersized text.
+
+**Drawing format check:** the DRC also checks the generated sheets: letter heights, required title-block fields,
+revision block vs. title block, and parts-list find numbers vs. balloons. These findings are reported under the rule
+*Drawing format*.
+
+## Web app and command line
+
+```bash
+pip install -r requirements.txt
+streamlit run cable_app.py
+```
 
 ```bash
 python -m cable_tool samples/cable_wirelist.csv -c samples/cable_connectors.csv -g samples/cable_groups.csv \
     -s samples/cable_splices.csv -l samples/parts_library.csv --length 48 --dwg-no W101-001 \
     -o W101-001.pdf --dxf dxf/ --svg svg/ --bom bom.csv --drc drc.csv --strict
-python -m cable_tool samples/y_harness_wirelist.csv -c samples/y_harness_connectors.csv -l samples/parts_library.csv --sheet D
+python -m cable_tool project.xlsx --sheet D -o drawing.pdf
 ```
 
-`--strict` exits with status 1 if the DRC finds errors (useful in a release check). `-l` can be repeated; later files win.
+- `--strict` exits with status 1 if the DRC finds errors (useful in a release check).
+- `-l` can be repeated; later files win.
+- `--sheet` is the smallest sheet size to use; `--fixed-size` stops the automatic sizing.
 
 ### Input tables
 
@@ -80,7 +137,7 @@ for example `OD (mm)`.
 | shield_term | Dia Min/Max over the shielded cable or group |
 | shield | Wall (added to a built-up group's diameter) |
 
-Library descriptions are used in the bill of materials. `samples/parts_library.csv` shows the format. **Its values are
+Every type can also have `Description` (used in the parts list) and `CAGE` (the parts-list CAGE CODE column). `samples/parts_library.csv` shows the format. **Its values are
 examples, not datasheet values.** Build your library from the manufacturers' datasheets.
 
 ### Design rule check
@@ -99,6 +156,7 @@ examples, not datasheet values.** Build your library from the manufacturers' dat
 | Part type | A part is used where its library type makes sense (for example, not a wire as a backshell) | Warning |
 | Completeness | Missing part numbers, pins, duplicate IDs, unknown lengths, unused connectors/splices | Warning |
 | Parts library | Parts that aren't in the library, or are missing the parameter a check needs (the check is skipped) | Info |
+| Drawing format | Letter heights, required title-block fields, revision block vs. title block, parts list vs. balloons (ASME Y14) | Error / warning / info |
 
 **Bundle diameter** at a connector counts every wire and cable that ends there (a cable or built-up shielded group
 counts once, at its OD or at its members' bundle plus shield wall). It uses the common rule of thumb
@@ -124,21 +182,30 @@ The part numbers and parameters in the samples are illustrative examples (D38999
 contacts, M85049 backshells, M22759 wire, M27500 cable, M81824 splices). Check every part number and value against
 your own design, datasheets, and approved parts list.
 
-### Running it
+### Privacy
 
-```bash
-pip install -r requirements.txt
-streamlit run cable_app.py
-```
-
-Then open http://localhost:8501. `.streamlit/config.toml` makes the app listen only on `localhost` and turns off
-Streamlit's usage statistics. Everything is processed on your computer.
+Everything runs on your computer. The desktop app and CLI make no network connections, and
+`.streamlit/config.toml` makes the web app listen only on `localhost` with Streamlit's usage statistics off.
 
 ### Example output
 
 `examples/` holds the drawing package generated from the W101 sample (`samples/cable_*.csv` plus
 `samples/parts_library.csv`): `W101-001.pdf`, one DXF per sheet in `examples/dxf/`, and the design rule check report
 `W101-001_drc.csv`.
+
+## Building the installers
+
+```powershell
+.\packaging\build.ps1          # Windows: dist\CableDesigner.exe (+ installer if Inno Setup 6 is installed)
+```
+
+```bash
+./packaging/build.sh            # macOS: dist/CableDesigner.app   Linux: dist/CableDesigner
+```
+
+Both scripts run the packaged app's `--smoke-test` (it opens a sample and exports a full package) before finishing.
+The GitHub Actions workflow runs the tests on every push. Pushing a version tag (`git tag v0.3.0 && git push --tags`)
+builds the Windows installer and executable and the macOS app, smoke-tests them, and attaches them to a GitHub release.
 
 ## Tests
 

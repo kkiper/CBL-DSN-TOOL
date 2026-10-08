@@ -156,5 +156,6 @@ def check_format(sheets, design) -> list[FormatIssue]:
                                   "Find numbers not ballooned on the assembly view (listed in tables instead): "
                                   + ", ".join(str(n) for n in missing) + "."))
     for w in meta.get("layout_warnings", ()):
-        issues.append(FormatIssue("WARNING", "LAYOUT", w))
+        routine = w.startswith("Sheet size increased") or w.startswith("The parts list continues")
+        issues.append(FormatIssue("INFO" if routine else "WARNING", "LAYOUT", w))
     return issues
