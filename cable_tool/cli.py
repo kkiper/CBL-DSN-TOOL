@@ -43,7 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--drc", metavar="FILE", help="Write the design rule check report (.csv or .xlsx)")
     parser.add_argument("--strict", action="store_true", help="Exit with status 1 if the design rule check finds errors")
     parser.add_argument("--save-project", help="Save everything as a project workbook (.xlsx) you can edit and reload")
-    parser.add_argument("--sheet", type=_sheet_size, default=DEFAULT_SHEET, help="Sheet size: B, C, D, A3, A2, A1 (default B)")
+    parser.add_argument("--sheet", type=_sheet_size, default=DEFAULT_SHEET,
+                        help="Smallest sheet size: B, C, D, E, A3, A2, A1, A0 (default B). The drawing moves to a larger "
+                             "size when needed to keep ASME minimum letter heights.")
+    parser.add_argument("--fixed-size", action="store_true",
+                        help="Use exactly --sheet, shrinking views below the ASME minimum letter height if needed")
     parser.add_argument("--title")
     parser.add_argument("--dwg-no")
     parser.add_argument("--rev")
@@ -73,16 +77,15 @@ def main(argv: list[str] | None = None) -> int:
 
     for m in msgs:
         print(f"warning: {m}", file=sys.stderr)
-    report = run_drc(design)
+    sheets, layout_msgs = build_drawing(design, args.sheet, auto_size=not args.fixed_size)
+    for m in layout_msgs:
+        print(f"note: {m}", file=sys.stderr)
+    report = run_drc(design, sheets)
     counts = report.counts()
     for f in report.sorted():
         if f.severity != INFO:
             print(f"{f.severity.lower()}: [{f.rule}] {f.item + ': ' if f.item else ''}{f.message}", file=sys.stderr)
     print(f"Design rule check: {counts[ERROR]} error(s), {counts[WARNING]} warning(s), {counts[INFO]} info")
-
-    sheets, layout_msgs = build_drawing(design, args.sheet)
-    for m in layout_msgs:
-        print(f"warning: {m}", file=sys.stderr)
     out = Path(args.out)
     out.write_bytes(sheets_to_pdf(sheets, title=f"{tb.drawing_number} {tb.title}".strip()))
     print(f"Wrote {len(sheets)}-sheet drawing to {out}")

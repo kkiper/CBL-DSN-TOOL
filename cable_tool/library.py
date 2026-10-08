@@ -69,6 +69,7 @@ LIBRARY_COLUMNS: dict[str, list[str]] = {
     "conductors": ["conductors", "conductorcount", "cores"],
     "wall": ["wall", "wallthickness", "thickness", "shieldwall"],
     "color": ["color", "colour"],
+    "cage": ["cage", "cagecode", "fscm", "mfrcage", "manufacturercage"],
     "notes": ["notes", "note", "remarks", "source"],
 }
 NUMERIC = {"od", "dia_min", "dia_max", "wall"}            # lengths (inches)
@@ -78,7 +79,7 @@ LIBRARY_HEADERS = {
     "pn": "P/N", "type": "Type", "description": "Description", "awg": "AWG", "od": "OD",
     "awg_min": "AWG Min", "awg_max": "AWG Max", "dia_min": "Dia Min", "dia_max": "Dia Max",
     "cma_min": "CMA Min", "cma_max": "CMA Max", "contact_pn": "Contact P/N", "contacts": "Contacts",
-    "conductors": "Conductors", "wall": "Wall", "color": "Color", "notes": "Notes",
+    "conductors": "Conductors", "wall": "Wall", "color": "Color", "cage": "CAGE", "notes": "Notes",
 }
 
 
@@ -110,6 +111,7 @@ class Part:
     conductors: float | None = None
     wall: float | None = None
     color: str = ""
+    cage: str = ""
     notes: str = ""
 
     @property

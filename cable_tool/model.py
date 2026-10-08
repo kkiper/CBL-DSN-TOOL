@@ -88,14 +88,38 @@ class Splice:
 
 @dataclass
 class TitleBlock:
+    """ASME Y14.1 title block, application block and approvals."""
+
     title: str = "CABLE ASSEMBLY"
     drawing_number: str = ""
     revision: str = "-"
-    company: str = ""
+    company: str = ""              # name (and address) of the design activity
+    cage_code: str = ""            # CAGE code of the design activity
     drawn_by: str = ""
+    date: str = ""                 # date drawn
     checked_by: str = ""
-    date: str = ""
+    checked_date: str = ""
+    engineer: str = ""
+    engineer_date: str = ""
+    approved_by: str = ""
+    approved_date: str = ""
+    contract_number: str = ""
     scale: str = "NONE"
+    weight: str = ""
+    next_assy: str = ""            # application block
+    used_on: str = ""
+    statement: str = ""            # proprietary / distribution statement
+
+
+@dataclass
+class Revision:
+    """One row of the ASME Y14.35 revision block."""
+
+    rev: str
+    description: str = ""
+    date: str = ""
+    approved: str = ""
+    zone: str = ""
 
 
 UNIT_NAMES = {"IN": "INCHES", "MM": "MILLIMETERS", "CM": "CENTIMETERS", "FT": "FEET", "M": "METERS"}
@@ -121,6 +145,9 @@ class CableDesign:
     notes: list[str] = field(default_factory=lambda: list(DEFAULT_NOTES))
     part_descriptions: dict[str, str] = field(default_factory=dict)
     library: PartsLibrary = field(default_factory=PartsLibrary)
+    revisions: list[Revision] = field(default_factory=list)
+    layout: dict[str, tuple[float, float]] = field(default_factory=dict)   # canvas positions by ref (desktop app)
+    sheet_size: str = "ANSI B (17 x 11 in)"                                # smallest drawing sheet size
     units: str = "IN"
     tolerance: str = "0.5"
     overall_length: float | None = None   # used for two-connector cables when ends have no lengths

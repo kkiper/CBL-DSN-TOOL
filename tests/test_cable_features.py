@@ -253,7 +253,7 @@ def test_dxf_structure():
     texts = {e.dxf.text for e in msp.query("TEXT")}
     assert {"P1", "P2", "SP1", "TSP1", "WIRING DIAGRAM"} <= texts
     xs = [v[0] for e in msp.query("LINE") for v in (e.dxf.start, e.dxf.end)]
-    assert 0 < min(xs) and max(xs) < 17     # true size on an ANSI B (17 x 11 in) sheet
+    assert 0 < min(xs) and max(xs) < sheets[1].width / 72     # true size in inches
     assert ezdxf.__version__
 
 

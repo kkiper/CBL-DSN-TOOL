@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from .library import LIBRARY_COLUMNS, PartsLibrary, library_from_dataframe
-from .model import CableDesign, ConnectorEnd, Splice, Wire, WireGroup, natural_key
+from .model import CableDesign, ConnectorEnd, Revision, Splice, Wire, WireGroup, natural_key
 
 # field -> accepted header spellings (normalised: lowercase alphanumerics only)
 WIRE_COLUMNS: dict[str, list[str]] = {
@@ -87,8 +87,13 @@ GROUP_HEADERS = {
 SPLICE_HEADERS = {"ref": "Ref", "splice_pn": "Splice P/N", "near": "Near", "distance": "Distance", "notes": "Notes"}
 TITLE_FIELDS = {
     "title": "Title", "drawing_number": "Drawing Number", "revision": "Revision", "company": "Company",
-    "drawn_by": "Drawn By", "checked_by": "Checked By", "date": "Date", "scale": "Scale",
+    "cage_code": "CAGE Code", "drawn_by": "Drawn By", "date": "Date", "checked_by": "Checked By",
+    "checked_date": "Checked Date", "engineer": "Engineer", "engineer_date": "Engineer Date",
+    "approved_by": "Approved By", "approved_date": "Approved Date", "contract_number": "Contract Number",
+    "scale": "Scale", "weight": "Weight", "next_assy": "Next Assy", "used_on": "Used On",
+    "statement": "Statement",
 }
+REVISION_HEADERS = {"zone": "Zone", "rev": "Rev", "description": "Description", "date": "Date", "approved": "Approved"}
 
 # The standardised headers above are accepted too, so saved projects reload exactly.
 for _cols, _headers in ((WIRE_COLUMNS, WIRE_HEADERS), (CONNECTOR_COLUMNS, CONNECTOR_HEADERS),
@@ -269,6 +274,8 @@ def _sheet_kind(name: str) -> str | None:
         return "title"
     if "note" in n:
         return "notes"
+    if "revision" in n or n == "revs":
+        return "revisions"
     if "splice" in n:
         return "splices"
     if "group" in n or "shield" in n or "twist" in n:
@@ -306,6 +313,8 @@ def load_design(name: str, data: bytes, design: CableDesign | None = None) -> tu
             add_groups(design, groups_from_dataframe(_with_header(raw, GROUP_COLUMNS, {"group_id"})))
         elif kind == "splices":
             add_splices(design, splices_from_dataframe(_with_header(raw, SPLICE_COLUMNS, {"ref"})))
+        elif kind == "revisions":
+            design.revisions = revisions_from_dataframe(raw)
         elif kind == "title":
             _apply_title_sheet(design, raw)
         elif kind == "notes":
@@ -320,7 +329,9 @@ def load_design(name: str, data: bytes, design: CableDesign | None = None) -> tu
 
 def _apply_title_sheet(design: CableDesign, raw: pd.DataFrame) -> None:
     lookup = {_norm(v): k for k, v in TITLE_FIELDS.items()}
-    lookup.update({"dwgno": "drawing_number", "drawingno": "drawing_number", "partnumber": "drawing_number", "rev": "revision"})
+    lookup.update({"dwgno": "drawing_number", "drawingno": "drawing_number", "partnumber": "drawing_number",
+                   "rev": "revision", "cage": "cage_code", "drawn": "drawn_by", "checked": "checked_by",
+                   "approved": "approved_by", "contract": "contract_number", "contractno": "contract_number"})
     for row in raw.itertuples(index=False):
         if len(row) < 2:
             continue
@@ -343,6 +354,28 @@ def add_connectors(design: CableDesign, connectors: list[ConnectorEnd]) -> None:
             design.connectors[design.connectors.index(existing)] = c
         else:
             design.connectors.append(c)
+
+
+def revisions_from_dataframe(raw: pd.DataFrame) -> list[Revision]:
+    spec = {f: [_norm(h)] for f, h in REVISION_HEADERS.items()}
+    spec["rev"] += ["revision", "ltr", "letter"]
+    spec["description"] += ["desc", "change"]
+    df = _with_header(raw, spec, {"rev"}) if not set(map(str, raw.columns)) >= {"Rev"} else raw
+    mapping = map_columns(list(df.columns), spec)
+    if "rev" not in mapping:
+        return []
+    out = []
+    for row in df.to_dict("records"):
+        get = lambda f: _cell(row.get(mapping[f])) if f in mapping else ""  # noqa: E731
+        if get("rev"):
+            out.append(Revision(rev=get("rev"), description=get("description"), date=get("date"),
+                                approved=get("approved"), zone=get("zone")))
+    return out
+
+
+def revisions_to_dataframe(revisions: list[Revision]) -> pd.DataFrame:
+    return pd.DataFrame([{h: getattr(r, f) for f, h in REVISION_HEADERS.items()} for r in revisions],
+                        columns=list(REVISION_HEADERS.values()))
 
 
 def add_groups(design: CableDesign, groups: list[WireGroup]) -> None:
@@ -445,6 +478,7 @@ def save_design(design: CableDesign) -> bytes:
         splices_to_dataframe(design.splices).to_excel(writer, sheet_name="Splices", index=False)
         parts.to_excel(writer, sheet_name="Parts Library", index=False)
         title.to_excel(writer, sheet_name="Title Block", index=False)
+        revisions_to_dataframe(design.revisions).to_excel(writer, sheet_name="Revisions", index=False)
         pd.DataFrame({"Notes": design.notes}).to_excel(writer, sheet_name="Notes", index=False)
         bom_dataframe(build_bom(design), design.units).to_excel(writer, sheet_name="BOM (generated)", index=False)
         for ws in writer.book.worksheets:

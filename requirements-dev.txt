@@ -1,4 +1,6 @@
 -r requirements.txt
+-r requirements-desktop.txt
 pytest>=7
+pytest-qt>=4.4
 pypdf>=4.0
 ezdxf>=1.1

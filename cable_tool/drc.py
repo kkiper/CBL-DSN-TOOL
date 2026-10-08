@@ -394,8 +394,15 @@ class _Checker:
         return self.r
 
 
-def run_drc(design: CableDesign) -> DrcReport:
-    return _Checker(design).run()
+def run_drc(design: CableDesign, sheets=None) -> DrcReport:
+    """Run the design rules. Pass the generated ``sheets`` to also check the drawing format (ASME Y14)."""
+    report = _Checker(design).run()
+    if sheets:
+        from .asme import check_format
+
+        for issue in check_format(sheets, design):
+            report.add(issue.severity, "Drawing format", issue.item, issue.message)
+    return report
 
 
 __all__ = ["ERROR", "INFO", "WARNING", "Bundle", "DrcReport", "Finding", "run_drc", "SHIELD_FLOAT"]

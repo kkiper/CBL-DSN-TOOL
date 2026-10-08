@@ -1,0 +1,5 @@
+# Desktop app (python -m cable_desktop). The web app's Streamlit isn't needed.
+PySide6>=6.6
+pandas>=2.0
+openpyxl>=3.1
+reportlab>=4

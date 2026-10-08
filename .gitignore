@@ -6,3 +6,5 @@ venv/
 *.egg-info/
 build/
 dist/
+.venv-build/
+smoke-test-output/
