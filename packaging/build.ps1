@@ -5,8 +5,9 @@ python -m venv .venv-build
 .\.venv-build\Scripts\python -m pip install --upgrade pip
 .\.venv-build\Scripts\python -m pip install -r requirements-desktop.txt pyinstaller
 .\.venv-build\Scripts\pyinstaller packaging\cable_designer.spec --noconfirm --clean
-.\dist\CableDesigner.exe --smoke-test dist\smoke-test
-if ($LASTEXITCODE -ne 0) { throw "Smoke test of the packaged app failed" }
+# The exe is a windowed app, so wait for it explicitly and check its exit code
+$p = Start-Process -FilePath .\dist\CableDesigner.exe -ArgumentList "--smoke-test", "dist\smoke-test" -Wait -PassThru -NoNewWindow
+if ($p.ExitCode -ne 0) { throw "Smoke test of the packaged app failed (exit $($p.ExitCode))" }
 $version = (.\.venv-build\Scripts\python -c "import cable_desktop; print(cable_desktop.__version__)")
 $iscc = Get-Command iscc -ErrorAction SilentlyContinue
 if (-not $iscc) { $iscc = Get-Item "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue }
