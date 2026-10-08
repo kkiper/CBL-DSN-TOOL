@@ -204,7 +204,7 @@ Everything runs on your computer. The desktop app and CLI make no network connec
 ```
 
 Both scripts run the packaged app's `--smoke-test` (it opens a sample and exports a full package) before finishing.
-The GitHub Actions workflow runs the tests on every push. Pushing a version tag (`git tag v0.3.0 && git push --tags`)
+The GitHub Actions workflow runs the tests on every push. Pushing a version tag (`git tag v0.3.0 && git push --tags`), or running the workflow by hand from the Actions tab with a version,
 builds the Windows installer and executable and the macOS app, smoke-tests them, and attaches them to a GitHub release.
 
 ## Tests
