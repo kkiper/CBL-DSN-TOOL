@@ -1,0 +1,4 @@
+Severity,Rule,Item,Message
+WARNING,Completeness,,"Some wire lengths are unknown: enter the overall cable length, connector leg lengths, or per-wire lengths. Unknown quantities show as AR."
+INFO,Bundle diameter,P1,Bundle at P1 is 0.257 IN (10 wire(s)/cable(s)).
+INFO,Bundle diameter,P2,Bundle at P2 is 0.257 IN (10 wire(s)/cable(s)).

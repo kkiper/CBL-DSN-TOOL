@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=7
+pypdf>=4.0
+ezdxf>=1.1
