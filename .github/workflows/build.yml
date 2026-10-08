@@ -51,8 +51,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          .\dist\CableDesigner.exe --smoke-test dist\smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
+          # The exe is a windowed app, so PowerShell won't wait for it unless told to
+          $p = Start-Process -FilePath .\dist\CableDesigner.exe -ArgumentList "--smoke-test", "dist\smoke-test" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "smoke test failed (exit $($p.ExitCode))" }
+          if (-not (Test-Path dist\smoke-test\smoke.pdf)) { throw "smoke test wrote no PDF" }
           $version = python -c "import cable_desktop; print(cable_desktop.__version__)"
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
