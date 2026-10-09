@@ -46,9 +46,9 @@ python -m cable_desktop                # or: python -m cable_desktop project.cbl
     further out, so capsules never overlap. When the shielded wires aren't neighbours, each run of neighbouring
     wires gets its own capsule, and the capsules are joined down their column (one shield).
   - The drain leaves the bottom of the capsule, runs down its column and goes straight into its termination: the
-    SHELL port on the canvas, or a pin. On the wiring diagram each shield terminated to the shell gets its own row
-    under its wires: **SHELL** (connector shell) or **ADPTR** (backshell/adapter). A floating end gets a short
-    insulated stub.
+    SHELL port on the canvas, or a pin. The wiring diagram matches the canvas: the connector's pin table ends
+    with a **SHELL** row (signal BACKSHELL or CONNECTOR SHELL) whenever its shell is shown, and each shell-
+    terminated shield's drain runs down its own column into it. A floating end gets a short insulated stub.
 - **Shield terminations:** right-click a shield and choose *Terminate at P1*:
   - **Shell** goes to the connector's backshell, or to the connector shell if there's no backshell;
   - **Float** insulates the shield end;

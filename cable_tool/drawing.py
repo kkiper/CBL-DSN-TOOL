@@ -667,6 +667,7 @@ def wire_tag(w: Wire) -> str:
 
 
 NC = "NC"
+SHELL_ROW = "SHELL"
 NC_ROWS_MAX = 24        # more unused positions than this are summarised in one row (and listed in the notes)
 
 
@@ -677,12 +678,12 @@ class _Row:
     wire: Wire | None = None
     end_no: int = 0
     shield_of: str = ""
-    shell: bool = False           # a shield termination row: SHELL (connector shell) or ADPTR (backshell/adapter)
+    shell: bool = False           # the connector's SHELL row (shield terminations to the shell / backshell)
 
     @property
     def key(self) -> str:
-        """Lookup key of the row: its pin, or a per-shield key for a SHELL/ADPTR row (there can be several)."""
-        return f"#{self.pin}:{self.shield_of}" if self.shell else self.pin
+        """Lookup key of the row: its pin, or the SHELL row's own key (it isn't a contact)."""
+        return "#SHELL" if self.shell else self.pin
 
 
 NEST_STEP = 22.0       # extra offset per nesting level, so an overall shield sits clear of the shields inside it
@@ -713,6 +714,8 @@ def _shield_columns(design: CableDesign, ref: str, rows: list) -> dict[str, int]
         kind, pin = parse_shield_term(design.shield_term_at(gr, ref), ref)
         if idx and kind == "PIN":     # the drain lead runs down (or up) the column to its pin's row
             idx += [i for i, row in enumerate(rows) if row.pin == pin and row.wire is None]
+        elif idx and kind == SHIELD_BACKSHELL:      # ... or down to the SHELL row at the bottom
+            idx += [i for i, row in enumerate(rows) if row.shell]
         if idx and (gr.shielded or gr.jacketed or gr.twisted):
             spans[gid] = (min(idx), max(idx))
             gapped[gid] = max(idx) - min(idx) + 1 > len(idx)
@@ -732,20 +735,11 @@ def _shield_columns(design: CableDesign, ref: str, rows: list) -> dict[str, int]
 
 
 def _shell_rows(design: CableDesign, ref: str, rows: list) -> list:
-    """``rows`` with a SHELL (or ADPTR, for a backshell) row for each shield terminated to ``ref``'s shell, placed
-    right under the shield's own rows; inner shields first, so an overall shield's row comes after theirs."""
-    label = "ADPTR" if design.shell_name(ref) == "BACKSHELL" else "SHELL"
-    out = list(rows)
-    for gr in sorted(design.shell_terminations(ref), key=lambda g: design.group_level(g.group_id)):
-        gid = gr.group_id
-        member_ids = {w.wire_id for w in design.group_members(gid)}
-        last = -1
-        for i, row in enumerate(out):
-            if (row.wire is not None and row.wire.wire_id in member_ids) or \
-                    (row.shield_of and gid in design.group_chain(row.shield_of)):
-                last = i
-        out.insert(last + 1 if last >= 0 else len(out), _Row(label, f"{gid} SHIELD", shield_of=gid, shell=True))
-    return out
+    """``rows`` with the connector's SHELL row at the bottom, as on the canvas, when its shell connection is shown
+    (switched on, or a shield is terminated to it). Every shield terminated to the shell runs its drain into it."""
+    if not design.shell_shown(ref):
+        return list(rows)
+    return list(rows) + [_Row(SHELL_ROW, design.shell_name(ref), shell=True)]
 
 
 def _member_runs(pins: set[str], ref: str, row_index: dict, row_y: dict, inside=lambda row: False) -> list[list[float]]:
@@ -793,7 +787,7 @@ def wiring_diagram(design: CableDesign) -> Group:
             rows[c.ref] = sorted(rows[c.ref] + [_Row(p, NC) for p in nc], key=lambda r: key(r.pin))
         elif nc:
             rows[c.ref].append(_Row(NC, f"{len(nc)} POSITIONS, SEE NOTES"))
-    # Shields terminated to the shell: a SHELL / ADPTR row under each one's wires (IPC/WHMA-A-620 style)
+    # The SHELL connection: one row at the bottom of the pin table, as on the canvas
     for c in design.connectors:
         rows[c.ref] = _shell_rows(design, c.ref, rows[c.ref])
 
@@ -853,16 +847,18 @@ def wiring_diagram(design: CableDesign) -> Group:
             for r, row in enumerate(rs):
                 ry = y + r * row_h
                 row_index[(c.ref, row.key)] = (r, rs)
+                if row.shell:       # the SHELL row is set apart at the bottom, as on the canvas
+                    g.rect(x, ry, tw, row_h, fill=HEADER_FILL, width=THIN)
                 if r:
-                    g.line(x, ry, x + tw, ry, width=THIN)
+                    g.line(x, ry, x + tw, ry, width=THICK if row.shell else THIN)
                 g.text(pin_x + pin_w / 2, ry + 10, row.pin, size=size, bold=True, anchor="middle")
                 g.text(sig_x + 4, ry + 10, fit_text(row.signal, size, sig_w - 8), size=size)
                 cy = ry + row_h / 2
                 row_y.setdefault((c.ref, row.key), cy)
-                if row.wire is None and not row.shield_of:      # NC: no connection drawn
+                if row.wire is None and not row.shield_of and not row.shell:      # NC: no connection drawn
                     continue
                 g.circle(edge, cy, 1.3, fill="#000000", width=THIN)
-                if row.wire is None:        # shield drain or SHELL/ADPTR row: the shield's lead comes in here
+                if row.wire is None:        # shield drain or SHELL row: the shield's lead comes in here
                     continue
                 tip = edge + d * stub
                 g.line(edge, cy, tip, cy, width=THIN)
@@ -949,7 +945,7 @@ def wiring_diagram(design: CableDesign) -> Group:
             kind, pin = parse_shield_term(design.shield_term_at(gr, ref), ref)
             target = None
             if kind == SHIELD_BACKSHELL:
-                target = row_y.get((ref, f"#{'ADPTR' if design.shell_name(ref) == 'BACKSHELL' else 'SHELL'}:{gid}"))
+                target = row_y.get((ref, "#SHELL"))
             elif kind == "PIN":
                 target = row_y.get((ref, pin))
             top, bot = spans[0][0], spans[-1][1]
@@ -977,8 +973,8 @@ def wiring_diagram(design: CableDesign) -> Group:
         _capsule(lg, x, -9, 3, 8, dashed=False)
         lg.text(x + 8, 0, "JACKETED CABLE", size=T)
         x += 8 + text_width("JACKETED CABLE", T) + 16
-        lg.text(x, 0, "SHELL / ADPTR = SHIELD TERMINATED TO CONNECTOR SHELL / BACKSHELL (ADAPTER)", size=T)
-        x += text_width("SHELL / ADPTR = SHIELD TERMINATED TO CONNECTOR SHELL / BACKSHELL (ADAPTER)", T) + 16
+        lg.text(x, 0, "SHELL = SHIELD TERMINATED TO CONNECTOR SHELL / BACKSHELL", size=T)
+        x += text_width("SHELL = SHIELD TERMINATED TO CONNECTOR SHELL / BACKSHELL", T) + 16
         if tied:
             _capsule(lg, x, -12, -5, 6, dashed=True)
             lg.line(x, -5, x, 0, width=THIN, dash=(2.5, 1.5))

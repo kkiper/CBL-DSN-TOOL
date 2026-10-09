@@ -77,7 +77,7 @@ def test_wiring_diagram_ties_non_adjacent_shield_and_uses_pin_order():
     sheets, _ = build_drawing(d)
     svg = sheet_to_svg(sheets[2])
     assert "JOINED CAPSULES = ONE SHIELD OVER NON-ADJACENT WIRES" in svg and f">{s1}<" in svg
-    assert f">{s1} SHIELD<" in svg and ">ADPTR<" in svg      # its own termination row under its wires
+    assert ">SHELL<" in svg and ">BACKSHELL<" in svg         # P1's SHELL row, which the drain runs into
     # put the members next to each other and the tie goes away
     d.connector("P1").pin_order = d.arranged_pins("P1", ["A", "B", "C", "D", "E", "F", "G", "H"])
     d.connector("P2").pin_order = d.arranged_pins("P2", ["A", "B", "C", "D", "E", "F", "G", "H"])
@@ -100,7 +100,7 @@ def test_round_trip_shell_parent_and_pin_order():
     assert wb.group("TSP1").parent == s2 and wb.connector("P2").pin_order == ["B", "A"]
 
 
-def test_shell_rows_sit_under_their_shields_and_columns_do_not_overlap():
+def test_one_shell_row_at_the_bottom_and_columns_do_not_overlap():
     from cable_tool.drawing import _Row, _shell_rows, _shield_columns
 
     d = two_connector_design()
@@ -114,8 +114,11 @@ def test_shell_rows_sit_under_their_shields_and_columns_do_not_overlap():
         wire = next(w for w in d.wires if (w.from_ref, w.from_pin) == ("P1", pin) or (w.to_ref, w.to_pin) == ("P1", pin))
         rows.append(_Row(pin, "", wire))
     out = _shell_rows(d, "P1", rows)
-    labels = [(r.pin, r.shield_of) for r in out]
-    assert labels[2] == ("SHELL", s1)                        # right under A and B
-    assert labels.index(("SHELL", s2)) > labels.index(("SHELL", "TSP1"))     # overall shield's row comes last
+    assert [r for r in out if r.shell] == [out[-1]]                      # one SHELL row, at the bottom
+    assert (out[-1].pin, out[-1].signal) == ("SHELL", "CONNECTOR SHELL")
     cols = _shield_columns(d, "P1", out)
-    assert cols[s2] > max(cols[s1], cols["TSP1"], cols["TP2"])   # the overall shield sits outside the rest
+    # every lead into the SHELL row has a column of its own; the overall shield sits outside the rest
+    assert len({cols[s1], cols["TSP1"], cols[s2]}) == 3
+    assert cols[s2] > max(cols[s1], cols["TSP1"], cols["TP2"])
+    d.connector("P2").show_shell = False
+    assert not any(r.shell for r in _shell_rows(d, "P2", rows))          # no shell shown, no SHELL row
