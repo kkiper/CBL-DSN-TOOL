@@ -326,5 +326,5 @@ def contact_info(design, kind: str, rec) -> str:
     found = layout_for(pn)
     if found:
         info, cavs = found
-        lines.append(f"Insert {info.insert_name} ({len(cavs)} contacts, {info.contact_type}); face view on sheet 1.")
+        lines.append(f"Insert {info.insert_name} ({len(cavs)} contacts, {info.contact_type}); pinout on sheet 2.")
     return "\n".join(lines)

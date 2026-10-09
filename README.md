@@ -10,9 +10,10 @@ with a parts list, wiring diagram, wire list, and a design rule check (DRC) driv
 
 | Sheet | Contents |
 |---|---|
-| 1 | Assembly view (connectors, backshells, boots, ID labels, splices, dimensions, find-number balloons, flag notes), parts list, general and flag notes, revision block, application block, tolerance block, title block |
-| 2 | Wiring diagram: a pin-out table per connector; wires pin to pin or to splice nodes; twisted-pair marks, shield and cable-jacket outlines, and shield terminations (to backshell, drain to a pin, or floating) |
-| 3+ | Wire list, wire groups and shields, splices, label schedule, and any parts-list continuation |
+| 1 | General and flag notes, parts list, revision block, application block, tolerance block, title block |
+| 2 | Assembly view (connectors, backshells, boots, ID labels, splices, dimensions, find-number balloons, flag notes) with each connector's pinout drawn under it |
+| 3 | Wiring diagram: a pin-out table per connector, including NC positions; wires pin to pin or to splice nodes; twisted-pair marks, shield and cable-jacket outlines, and shield terminations (to backshell, drain to a pin, or floating) |
+| 4+ | Wire list, wire groups and shields, splices, label schedule, and any parts-list continuation |
 
 ## Desktop app
 
@@ -162,17 +163,23 @@ list doesn't add a contact line, the notes say which contacts are supplied with 
 checks every wire against the linked contact's AWG and sealing range. Set *Contacts Included* in the library to
 override the rule for any part. A connector-table *Contact P/N* that differs from the supplied contact is a warning.
 
-### Connector face views
+### Connector pinouts and NC positions
 
-Sheet 1 shows the mating face of each connector whose insert arrangement is known: every cavity with its contact
-letter or number, wired contacts filled, plus the insert arrangement, key position and contact type. Layouts are in
+Sheet 2 draws a pinout under each connector whose insert arrangement is known. It is the front (engaging) face of
+the connector called out in the parts list: every cavity with its contact letter or number, wired contacts filled,
+unused (NC) contacts open, plus the P/N, insert arrangement, key position and contact type. The assembly view and its
+pinouts are scaled together to fit the sheet, down to the ASME minimum letter height; past that the drawing moves to
+the next sheet size (or, with a fixed sheet size, is drawn smaller with a format warning). Layouts are in
 `cable_tool/data/d38999_insert_layouts.csv`: 33 MIL-DTL-38999 Series III arrangements (MIL-STD-1560), extracted from
 the vector insert-arrangement drawings by `tools/extract_insert_layouts.py` and checked against the catalogue's
 contact table. The arrangement comes from the D38999 P/N (shell letter plus arrangement number, e.g. `D38999/26WD19SN`
 is insert 15-19).
 
-- The drawings are the front face of the pin insert; socket inserts are drawn mirrored. Verify this against
-  MIL-STD-1560 for your application.
+- MIL-STD-1560 draws the front face of the pin insert; a socket connector's front face is its mirror image, so socket
+  pinouts are mirrored to show the actual part. Verify this against MIL-STD-1560 for your application.
+- **NC (no connection):** every contact position with no wire or shield drain is NC. Positions come from the insert
+  layout, or 1 to *Contacts* from the library when the pins are numbered. NC positions are listed in the wiring
+  diagram's pin tables (one row each, or a summary row when there are more than 24) and in a general note.
 - The master keyway isn't shown, because the source drawings don't show it.
 - Dense size-22D arrangements (D35, E35, F35, H35, J35 and others) aren't included: the source only labels the first
   contact of each ring, so their numbering isn't documented per cavity.

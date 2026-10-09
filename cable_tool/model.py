@@ -268,6 +268,28 @@ class CableDesign:
                 pins.append(p)
         return sorted(pins, key=natural_key)
 
+    def contact_positions(self, ref: str) -> list[str]:
+        """Every contact position of connector ``ref``: from its insert layout, else 1..N from the library's contact
+        count when the pins are numbered. Empty when unknown."""
+        from .inserts import layout_for
+
+        c = self.connector(ref)
+        if not c:
+            return []
+        found = layout_for(c.connector_pn)
+        if found:
+            return [cav.contact for cav in found[1]]
+        part = self.library.get(c.connector_pn)
+        used = self.pins_used(ref)
+        if part and part.contacts and all(p.isdigit() for p in used):
+            return [str(i) for i in range(1, int(part.contacts) + 1)]
+        return []
+
+    def unused_pins(self, ref: str) -> list[str]:
+        """Contact positions of ``ref`` with nothing connected (NC)."""
+        used = set(self.pins_used(ref))
+        return [p for p in self.contact_positions(ref) if p not in used]
+
     def wire_gauge(self, w: Wire) -> float | None:
         from .library import parse_awg
 

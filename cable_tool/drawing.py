@@ -1,11 +1,12 @@
 """Lay out the cable drawing in ASME Y14 format.
 
-Sheet 1   Assembly view (connector ends, backshells, boots, ID labels, splices, dimensions, find-number balloons
-          and flag notes), parts list (Y14.34) above the title block, general and flag notes (Y14.100),
-          revision block (Y14.35), application block, "UNLESS OTHERWISE SPECIFIED" block and full title block.
-Sheet 2   Wiring diagram (Y14.15 style): connector pin-outs, wires point to point or to splice nodes, twisted
-          pairs, shields and shield terminations.
-Sheet 3+  Wire list, wire groups and shields, splices, label schedule, and any parts-list continuation.
+Sheet 1   General and flag notes (Y14.100), parts list (Y14.34) above the title block, revision block (Y14.35),
+          application block, "UNLESS OTHERWISE SPECIFIED" block and full title block.
+Sheet 2   Assembly view (connector ends, backshells, boots, ID labels, splices, dimensions, find-number balloons
+          and flag notes), with each connector's pinout (front face, NC positions open) under it.
+Sheet 3   Wiring diagram (Y14.15 style): connector pin-outs including NC positions, wires point to point or to
+          splice nodes, twisted pairs, shields and shield terminations.
+Sheet 4+  Wire list, wire groups and shields, splices, label schedule, and any parts-list continuation.
 Every sheet has a zoned border (Y14.1), a reverse-oriented drawing-number block, and a title block
 (continuation sheets use the reduced Y14.1 continuation title block).
 
@@ -60,6 +61,7 @@ __all__ = ["DEFAULT_SHEET", "SHEET_SIZES", "build_drawing", "assign_sides", "wir
 
 IN = 72.0
 PAD = 12.0
+ASSEMBLY_SHEET, WIRING_SHEET, FIRST_TABLE_SHEET = 2, 3, 4
 SHADE = "#d9d9d9"
 HEADER_FILL = "#eeeeee"
 T = VIEW_TEXT                   # body text size inside views and tables (scaled up to >= 0.12 in)
@@ -393,6 +395,7 @@ SPLICE_DIM_OFF = 46.0
 LEG_SPACING = 240.0
 CABLE_W = 14.0
 LABEL_GAP = 16.0
+PINOUT_TOP = 100.0      # pinout views start this far below their connector's centreline
 
 
 @dataclass
@@ -511,9 +514,18 @@ def assembly_view(design: CableDesign, items: dict[str, int], marks: _Marks | No
     wire_items = sorted({items[p] for p in bundle_pns if p in items})
     straight = len(left) == 1 and len(right) == 1
 
+    # Pinout of each connector, drawn under it; legs are spread apart to make room
+    views = {c.ref: v for c in design.connectors
+             if (v := face_view(c.ref, c.connector_pn, set(design.pins_used(c.ref)), T)) is not None}
+    view_h = max([v.bounds()[3] - v.bounds()[1] for v in views.values()], default=0.0)
+    spacing = max(LEG_SPACING, PINOUT_TOP + view_h + 110) if views else LEG_SPACING
+
     per_row = 4
     cable_min = max(110.0, 30 + min(len(wire_items), per_row) * 2 * BALLOON_R + 24)
-    max_dy = max(LEG_SPACING * (max(len(left), len(right)) - 1) / 2, 0)
+    if views:      # room between the pinouts of facing connectors
+        view_w = max(v.bounds()[2] - v.bounds()[0] for v in views.values())
+        cable_min = max(cable_min, view_w / 2 - 60)
+    max_dy = max(spacing * (max(len(left), len(right)) - 1) / 2, 0)
     bend = 0.0 if straight else 40 + 0.45 * max_dy
     left_end = max(end_length(c) for c in left)
     right_end = max((end_length(c) for c in right), default=0)
@@ -523,11 +535,12 @@ def assembly_view(design: CableDesign, items: dict[str, int], marks: _Marks | No
     legs = []  # (connector, face_x, y, d)
     for side, face, d in ((left, 0.0, 1), (right, right_face, -1)):
         for i, c in enumerate(side):
-            legs.append((c, face, by + (i - (len(side) - 1) / 2) * LEG_SPACING, d))
+            legs.append((c, face, by + (i - (len(side) - 1) / 2) * spacing, d))
 
     paths = []
     for c, face, y, d in legs:
-        start = face + d * (end_length(c) - (58 if c.label_pn else 0) - 4)
+        # The cable runs into the connector body; the backshell, boot and label are drawn over it
+        start = face + d * 40
         paths.append([(start, y), (bx - d * bend, y), (bx, by)])
     if not right:
         paths.append([(bx, by), (bx + 30, by)])
@@ -588,26 +601,14 @@ def assembly_view(design: CableDesign, items: dict[str, int], marks: _Marks | No
         for c, face, y, d in legs:
             s = -1 if y < by - 1 else 1
             dimension(g, face, bx, y + s * DIM_OFF, y + s * 34, by + s * 12, _dim_text(c.length, design))
-    return g
 
-
-def face_views(design: CableDesign, max_width: float) -> Group | None:
-    """Mating-face views of the connectors with a known insert layout, in rows no wider than ``max_width``."""
-    views = [v for c in design.connectors
-             if (v := face_view(c.ref, c.connector_pn, set(design.pins_used(c.ref)), T)) is not None]
-    if not views:
-        return None
-    g = Group(layer="FACE_VIEWS")
-    x, y, row_h = 0.0, 0.0, 0.0
-    for v in views:
+    for c, face, y, d in legs:
+        v = views.get(c.ref)
+        if v is None:
+            continue
         vx0, vy0, vx1, vy1 = v.bounds()
-        w, h = vx1 - vx0, vy1 - vy0
-        if x > 0 and x + w > max_width:
-            x, y, row_h = 0.0, y + row_h + 24, 0.0
-        v.dx, v.dy = x - vx0, y - vy0
+        v.dx, v.dy = face + d * 28 - (vx0 + vx1) / 2, y + PINOUT_TOP - vy0
         g.add(v)
-        x += w + 36
-        row_h = max(row_h, h)
     return g
 
 
@@ -620,6 +621,10 @@ def _gauge_text(g: str) -> str:
 
 def wire_tag(w: Wire) -> str:
     return "  ".join(x for x in (w.wire_id, _gauge_text(w.gauge), w.color.upper()) if x)
+
+
+NC = "NC"
+NC_ROWS_MAX = 24        # more unused positions than this are summarised in one row (and listed in the notes)
 
 
 @dataclass
@@ -656,6 +661,13 @@ def wiring_diagram(design: CableDesign) -> Group:
                 rows[c.ref].append(_Row(pin, f"{gr.group_id} SHIELD", None, 0, gr.group_id))
     for lst in rows.values():
         lst.sort(key=lambda r: (natural_key(r.pin), natural_key(r.wire.wire_id if r.wire else "")))
+    # Unused contact positions: one NC row each, or a single summary row when there are many
+    for c in design.connectors:
+        nc = design.unused_pins(c.ref)
+        if 0 < len(nc) <= NC_ROWS_MAX:
+            rows[c.ref] = sorted(rows[c.ref] + [_Row(p, NC) for p in nc], key=lambda r: natural_key(r.pin))
+        elif nc:
+            rows[c.ref].append(_Row(NC, f"{len(nc)} POSITIONS, SEE NOTES"))
 
     size, row_h = T, 14.0
     tag_end = max([60.0] + [text_width(wire_tag(w), T) + 10 for w in design.wires])
@@ -715,6 +727,8 @@ def wiring_diagram(design: CableDesign) -> Group:
                 g.text(sig_x + 4, ry + 10, fit_text(row.signal, size, sig_w - 8), size=size)
                 cy = ry + row_h / 2
                 row_y.setdefault((c.ref, row.pin), cy)
+                if row.wire is None and not row.shield_of:      # NC: no connection drawn
+                    continue
                 g.circle(edge, cy, 1.3, fill="#000000", width=THIN)
                 if row.wire is None:
                     shields.line(edge, cy, edge + d * (oval_off + 14), cy, width=THIN, dash=(3, 2))
@@ -867,7 +881,8 @@ def auto_notes(design: CableDesign, bom: list[BomItem], table_sheets: tuple[int,
     if used_splices:
         tables.append("SPLICES")
     tables.append("LABEL SCHEDULE")
-    notes = [Note(f"WIRING DIAGRAM ON SHEET 2. {', '.join(tables[:-1])} AND {tables[-1]} ON {sheets}.")]
+    notes = [Note(f"ASSEMBLY VIEW AND CONNECTOR PINOUTS ON SHEET {ASSEMBLY_SHEET}. WIRING DIAGRAM ON SHEET "
+                  f"{WIRING_SHEET}. {', '.join(tables[:-1])} AND {tables[-1]} ON {sheets}.")]
     supplied = [c for c in design.connectors if design.contacts_included(c.ref) and design.pins_used(c.ref)]
     if supplied:
         finds = sorted({b.item for b in bom if b.category == "connector" and any(b.pn == c.connector_pn for c in supplied)})
@@ -876,8 +891,15 @@ def auto_notes(design: CableDesign, bom: list[BomItem], table_sheets: tuple[int,
         notes.append(Note(f"CONTACTS{' (' + ', '.join(contacts) + ')' if contacts else ''} ARE SUPPLIED WITH CONNECTORS "
                           f"({label}); DO NOT ORDER SEPARATELY."))
     if any(layout_for(c.connector_pn) for c in design.connectors):
-        notes.append(Note("CONNECTOR FACE VIEWS SHOW THE MATING FACE PER MIL-STD-1560 (SOCKET INSERTS MIRRORED). "
-                          "FILLED CAVITIES ARE WIRED; UNFILLED CAVITIES ARE UNUSED. MASTER KEYWAY NOT SHOWN."))
+        notes.append(Note("CONNECTOR PINOUTS SHOW THE FRONT (ENGAGING) FACE OF THE CONNECTOR CALLED OUT: INSERT "
+                          "ARRANGEMENT PER MIL-STD-1560, SOCKET INSERTS AS THE MIRROR IMAGE OF THE PIN INSERT. FILLED "
+                          "CAVITIES ARE WIRED; OPEN CAVITIES ARE NC. MASTER KEYWAY NOT SHOWN."))
+    nc = [(c.ref, design.unused_pins(c.ref)) for c in design.connectors]
+    nc = [(ref, pins) for ref, pins in nc if pins]
+    if nc:
+        parts = [f"{ref}: {', '.join(pins)}" if len(pins) <= 40 else f"{ref}: {len(pins)} POSITIONS NOT IN THE WIRE LIST"
+                 for ref, pins in nc]
+        notes.append(Note("NC (NO CONNECTION) CONTACT POSITIONS: " + "; ".join(parts) + "."))
     if any(gr.twisted and not gr.cable_pn for gr in active_groups):
         notes.append(Note("TWIST THE WIRES OF EACH TWISTED GROUP TOGETHER OVER THEIR FULL LENGTH (SEE WIRE GROUPS TABLE)."))
     if bundles:
@@ -1042,15 +1064,15 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
     bundles = run_drc(design).bundles
 
     def make_notes(total_sheets: int) -> list[Note]:
-        return [Note(t) for t in design.rendered_notes()] + auto_notes(design, bom, (3, total_sheets), bundles)
+        return [Note(t) for t in design.rendered_notes()] + auto_notes(design, bom, (FIRST_TABLE_SHEET, total_sheets), bundles)
 
     # Flag-note numbers don't depend on the sheet count, so they can be fixed now
     note_of: dict[str, int] = {}
-    for i, n in enumerate(make_notes(3), start=1):
+    for i, n in enumerate(make_notes(FIRST_TABLE_SHEET), start=1):
         for cat in n.flag_categories:
             note_of[cat] = i
 
-    # --- Sheets 3+: tables at exactly the minimum text scale --------------------------------------
+    # --- Sheets 4+: tables at exactly the minimum text scale --------------------------------------
     table_sheets: list[tuple[Sheet, Frame]] = []
     sheet, f = _new_sheet(W, H, "Wire list", design)
     y = _heading(sheet.root, f.x0 + PAD, f.y0 + DWG_BLOCK[1] + PAD, "WIRE LIST AND TABLES")
@@ -1097,8 +1119,10 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
                 first = False
         return y, col_top, col_x, col_right, sheet, f
 
-    # Parts list: as many rows as fit above the sheet-1 title block; the rest continues with the tables
-    s1, f1 = _new_sheet(W, H, "Assembly", design)
+    # --- Sheet 1: notes and parts list -----------------------------------------------------------
+    # Parts list above the title block, as tall as the space under the revision block allows; the rest continues
+    # with the tables. Notes on the left.
+    s1, f1 = _new_sheet(W, H, "Notes and parts list", design)
     rev_bottom = draw_revision_block(s1.root, f1, design)
     pl_headers, pl_rows = parts_list_rows(design, bom, note_of)
     pl_widths = table_widths(pl_headers, pl_rows or [[""] * 6], caps=[0, 0, 0, 150, 190, 0])
@@ -1106,7 +1130,7 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
     strip_top = f1.y1 - TB_H
     pl_scale = S
     pl_w = sum(pl_widths) * pl_scale
-    max_pl_h = (strip_top - PAD) - (rev_bottom + 2.5 * IN)
+    max_pl_h = (strip_top - PAD) - (rev_bottom + PAD)
     fit_rows = max(int((max_pl_h / pl_scale - TITLE_H - HEADER_H) // ROW_H), 0)
     sheet1_rows, overflow_parts = pl_rows[:fit_rows], pl_rows[fit_rows:]
     if overflow_parts:
@@ -1114,7 +1138,7 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
         table_specs.insert(0, ("PARTS LIST (CONTINUED)", (pl_headers, overflow_parts), [0, 0, 0, 150, 190, 0],
                                frozenset({0, 1, 2})))
     flow_tables(table_specs, y, col_top, col_x, col_right, sheet, f)
-    total = 2 + len(table_sheets)
+    total = FIRST_TABLE_SHEET - 1 + len(table_sheets)
     notes = make_notes(total)
     marks = _Marks(flags={b.item: note_of[b.category] for b in bom if b.category in note_of})
 
@@ -1126,46 +1150,27 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
     if pl_w > (f1.x1 - f1.x0) * 0.6:
         ok = False
 
-    # Notes at the lower left, above the application/tolerance blocks. Connector face views go to the right of
-    # the notes, next to the parts list; if they'd take too much of that width they're drawn under the assembly.
-    lower_w = (f1.x1 - pl_w) - f1.x0 - 3 * PAD
-    av = assembly_view(design, items, marks)
-    fv = face_views(design, lower_w * 0.45 / S)
-    fv_w = 0.0
-    if fv is not None:
-        fx0, fy0, fx1, fy1 = fv.bounds()
-        if (fx1 - fx0) * S <= lower_w * 0.5 and (fy1 - fy0) * S <= (strip_top - rev_bottom) * 0.5:
-            fv.scale = S
-            fv_w = (fx1 - fx0) * S
-            fv.dx = f1.x1 - pl_w - PAD - fv_w - fx0 * S
-            fv.dy = strip_top - PAD - (fy1 - fy0) * S - fy0 * S
-            s1.root.add(fv)
-        else:
-            ax0, ay0, ax1, ay1 = av.bounds()
-            fv.dx, fv.dy = ax0 - fx0, ay1 + 40 - fy0
-            av.add(fv)
-            fv = None
-    notes_w_pt = lower_w - (fv_w + 2 * PAD if fv_w else 0)
+    top = f1.y0 + DWG_BLOCK[1] + PAD
+    notes_w_pt = f1.x1 - max(pl_w, REV_W) - f1.x0 - 3 * PAD
     ng = notes_block(notes, notes_w_pt / S)
     ng.scale = S
     nb = ng.bounds()
-    notes_h = (nb[3] - nb[1]) * S
-    ng.dx, ng.dy = f1.x0 + PAD, strip_top - PAD - notes_h
-    s1.root.add(ng)
-    notes_top = min(ng.dy, fv.dy + fv.bounds()[1] * S) if fv is not None else ng.dy
-
-    # Assembly view: the roomier of (a) left of the revision block, or (b) full width below it
-    top = _heading(s1.root, f1.x0 + PAD, f1.y0 + DWG_BLOCK[1] + PAD, "ASSEMBLY VIEW (NOT TO SCALE)")
-    bottom = min(notes_top, pl_g.dy) - PAD
-    a_box = (f1.x0 + PAD, top, (f1.x1 - REV_W) - f1.x0 - 2 * PAD, bottom - top)
-    b_box = (f1.x0 + PAD, rev_bottom + PAD, f1.x1 - f1.x0 - 2 * PAD, bottom - rev_bottom - PAD)
-    bx0, by0, bx1, by1 = av.bounds()
-    fit = lambda box: min(box[2] / max(bx1 - bx0, 1), box[3] / max(by1 - by0, 1)) if box[3] > 0 else 0  # noqa: E731
-    if not _place(av, max(a_box, b_box, key=fit), max_scale=S * 1.5):
+    ng.dx, ng.dy = f1.x0 + PAD - nb[0] * S, top - nb[1] * S
+    if top + (nb[3] - nb[1]) * S > strip_top - PAD:
         ok = False
-    s1.root.add(av)
+    s1.root.add(ng)
 
-    # --- Sheet 2: wiring diagram --------------------------------------------------------------------
+    # --- Sheet 2: assembly view with each connector's pinout under it -----------------------------
+    s_av, f_av = _new_sheet(W, H, "Assembly", design)
+    top = _heading(s_av.root, f_av.x0 + PAD, f_av.y0 + DWG_BLOCK[1] + PAD, "ASSEMBLY VIEW AND CONNECTOR PINOUTS (NOT TO SCALE)")
+    av = assembly_view(design, items, marks)
+    # Scaled down as far as the ASME minimum letter height allows; beyond that the sheet size goes up
+    if not _place(av, (f_av.x0 + PAD, top + 6, f_av.x1 - f_av.x0 - 2 * PAD, f_av.y1 - CONT_TB_H - 2 * PAD - (top + 6)),
+                  max_scale=S * 1.5):
+        ok = False
+    s_av.root.add(av)
+
+    # --- Sheet 3: wiring diagram --------------------------------------------------------------------
     s2, f2 = _new_sheet(W, H, "Wiring diagram", design)
     top = _heading(s2.root, f2.x0 + PAD, f2.y0 + DWG_BLOCK[1] + PAD, "WIRING DIAGRAM")
     wd = wiring_diagram(design)
@@ -1174,7 +1179,7 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
         ok = False
     s2.root.add(wd)
 
-    sheets = [(s1, f1), (s2, f2), *table_sheets]
+    sheets = [(s1, f1), (s_av, f_av), (s2, f2), *table_sheets]
     for n, (sheet, frame) in enumerate(sheets, start=1):
         tbg = Group(layer="TITLE_BLOCK")
         if n == 1:

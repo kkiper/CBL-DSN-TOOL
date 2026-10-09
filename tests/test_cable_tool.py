@@ -113,15 +113,18 @@ def test_drawing_sheets(size):
     assert used in larger_sizes(size)                      # never smaller than asked for
     assert not any("too small" in w for w in warnings)
     n = len(sheets)
-    assert n >= 3
-    svg1 = sheet_to_svg(sheets[0])
-    for text in ("D38999/26WD18SN", "PARTS LIST", "FIND NO", "NOMENCLATURE OR DESCRIPTION", ">48<", "W101-001",
-                 f"1 OF {n}", "W101-P1", ">SP1<", "REVISIONS", "INITIAL RELEASE", "UNLESS OTHERWISE SPECIFIED:",
-                 "THIRD ANGLE PROJECTION", "APPLICATION"):
+    assert n >= 4
+    svg1 = sheet_to_svg(sheets[0])          # notes and parts list
+    for text in ("D38999/26WD18SN", "PARTS LIST", "FIND NO", "NOMENCLATURE OR DESCRIPTION", "W101-001",
+                 f"1 OF {n}", "REVISIONS", "INITIAL RELEASE", "UNLESS OTHERWISE SPECIFIED:",
+                 "THIRD ANGLE PROJECTION", "APPLICATION", "NOTES:"):
         assert text in svg1, text
-    svg2 = sheet_to_svg(sheets[1])
-    assert "RS422 TX+" in svg2 and "W3  22 AWG  WHT" in svg2
-    tables = "".join(sheet_to_svg(sh) for sh in sheets[2:])
+    assembly = sheet_to_svg(sheets[1])      # assembly view with pinouts
+    for text in (">48<", "W101-P1", ">SP1<", f"2 OF {n}", "P1 PINOUT, FRONT FACE", "P2 PINOUT, FRONT FACE"):
+        assert text in assembly, text
+    svg2 = sheet_to_svg(sheets[2])
+    assert "RS422 TX+" in svg2 and "W3  22 AWG  WHT" in svg2 and ">NC<" in svg2
+    tables = "".join(sheet_to_svg(sh) for sh in sheets[3:])
     for text in ("LABEL SCHEDULE", "WIRE GROUPS AND SHIELDS", "SHIELDED TWISTED PAIR", "P1: BACKSHELL", "P2: PIN L",
                  "SPLICES", "6 IN FROM P2 FACE"):
         assert text in tables
@@ -141,8 +144,8 @@ def test_long_wire_list_continues_on_more_sheets():
     wires = [Wire(f"W{i}", "P1", str(i), "P2", str(i), wire_pn="M22759/16-22-9", label_pn="M1") for i in range(1, 121)]
     design = CableDesign(connectors=[ConnectorEnd("P1", "C1"), ConnectorEnd("P2", "C2")], wires=wires, overall_length=24)
     sheets, warnings = build_drawing(design, auto_size=False)
-    assert len(sheets) > 3 and any("too small" in w for w in warnings)
-    joined = "".join(sheet_to_svg(s) for s in sheets[2:])
+    assert len(sheets) > 4 and any("too small" in w for w in warnings)
+    joined = "".join(sheet_to_svg(s) for s in sheets[3:])
     assert "WIRE LIST (CONTINUED)" in joined and ">W120<" in joined
     assert f"{len(sheets)} OF {len(sheets)}" in sheet_to_svg(sheets[-1])
     big, _ = build_drawing(design)        # automatic sizing moves up until the 120-row diagram fits
@@ -189,10 +192,10 @@ def test_cli(tmp_path, capsys):
                "-o", str(out), "--svg", str(svg_dir), "--bom", str(bom), "--dwg-no", "W200", "--sheet", "D"])
     assert rc == 0
     assert out.read_bytes().startswith(b"%PDF")
-    assert sorted(p.name for p in svg_dir.iterdir()) == ["W200_sheet1.svg", "W200_sheet2.svg", "W200_sheet3.svg"]
+    assert sorted(p.name for p in svg_dir.iterdir()) == ["W200_sheet1.svg", "W200_sheet2.svg", "W200_sheet3.svg", "W200_sheet4.svg"]
     bom_df = pd.read_csv(bom)
     assert bom_df.loc[bom_df["Part Number"] == "M22759/16-22-2", "Qty"].item() == 108.5  # W1 18+30, W4 18+42.5
-    assert "Wrote 3-sheet drawing" in capsys.readouterr().out
+    assert "Wrote 4-sheet drawing" in capsys.readouterr().out
 
 
 def test_cable_app_runs():

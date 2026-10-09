@@ -4,4 +4,4 @@ INFO,Bundle diameter,P1,Bundle at P1 is 0.257 IN (10 wire(s)/cable(s)).
 INFO,Bundle diameter,P2,Bundle at P2 is 0.257 IN (10 wire(s)/cable(s)).
 INFO,Drawing format,TITLE BLOCK,No CAGE code in the title block.
 INFO,Drawing format,TITLE BLOCK,No APPROVED name in the title block.
-INFO,Drawing format,LAYOUT,Sheet size increased from ANSI B (17 x 11 in) to ANSI D (34 x 22 in) so text meets the ASME Y14.2 minimum letter height.
+INFO,Drawing format,LAYOUT,Sheet size increased from ANSI B (17 x 11 in) to ANSI C (22 x 17 in) so text meets the ASME Y14.2 minimum letter height.

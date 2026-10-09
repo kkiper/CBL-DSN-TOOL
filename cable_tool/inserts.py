@@ -4,8 +4,8 @@ Layouts come from ``data/d38999_insert_layouts.csv``: MIL-DTL-38999 Series III a
 from the insert-arrangement drawings by ``tools/extract_insert_layouts.py``. Only arrangements whose every contact is
 labelled in the source drawing are included.
 
-MIL-STD-1560 draws each arrangement as the front (mating) face of the pin insert; the socket insert's mating face is
-its mirror image. The source drawings don't show the master keyway, so the face views don't either.
+MIL-STD-1560 draws each arrangement as the front (engaging) face of the pin insert; a socket insert's front face is
+its mirror image, so views of socket connectors are mirrored to show the actual part. The source drawings don't show the master keyway, so the face views don't either.
 """
 
 from __future__ import annotations
@@ -82,7 +82,9 @@ def layout_for(pn: str) -> tuple[InsertInfo, tuple[Cavity, ...]] | None:
 
 
 def face_view(ref: str, pn: str, used: set[str], text: float) -> Group | None:
-    """Mating-face view of connector ``ref``: every cavity with its contact label, wired contacts filled.
+    """Pinout of connector ``ref`` as the part ``pn`` itself looks from its front (engaging) face: every cavity with
+    its contact label, wired contacts filled, unused (NC) contacts open. A socket insert is drawn as the mirror image
+    of the MIL-STD-1560 (pin insert) arrangement, so the view always matches the part called out.
     ``text`` is the label text size; the insert is drawn big enough that labels keep their catalogue spacing.
     Returns None when no layout is known for ``pn``."""
     found = layout_for(pn)
@@ -101,10 +103,10 @@ def face_view(ref: str, pn: str, used: set[str], text: float) -> Group | None:
         g.circle(x, y, r, fill="#000000" if c.contact in used else "#ffffff", width=THIN)
         g.text(mirror * c.lx * R, -c.ly * R + text * 0.36, c.contact, size=text, anchor="middle")
     y = R * 1.12 + text + 6
-    for line in (f"VIEW {ref} MATING FACE",
-                 f"INSERT {info.insert_name}, KEY {info.key}",
-                 f"{info.contact_type.upper()} CONTACTS",
-                 fit_text(pn, text, R * 2.4)):
-        g.text(0, y, line, size=text, anchor="middle", bold=line.startswith("VIEW"))
+    for k, line in enumerate((f"{ref} PINOUT, FRONT FACE",
+                              fit_text(pn, text, R * 2.4),
+                              f"INSERT {info.insert_name}, KEY {info.key}",
+                              f"{info.contact_type.upper()} CONTACTS")):
+        g.text(0, y, line, size=text, anchor="middle", bold=k == 0)
         y += text + 3
     return g

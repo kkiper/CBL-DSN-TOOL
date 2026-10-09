@@ -73,9 +73,11 @@ def test_contacts_supplied_unless_less_contacts():
     assert bom["M39029/58-363"].qty == 2                            # J1 is the -LC version
     lib = design.library.get("D38999/26FD19SN")
     assert lib.contacts_included is True and lib.contact_pn == "M39029/56-351"
-    svg = sheet_to_svg(build_drawing(design)[0][0])
-    assert "ARE SUPPLIED WITH CONNECTORS" in svg and "VIEW P1 MATING FACE" in svg and "VIEW J1 MATING FACE" in svg
-    assert "INSERT 15-19, KEY N" in svg
+    sheets = build_drawing(design)[0]
+    notes, assembly = sheet_to_svg(sheets[0]), sheet_to_svg(sheets[1])
+    assert "ARE SUPPLIED WITH CONNECTORS" in notes
+    assert "P1 PINOUT, FRONT FACE" in assembly and "J1 PINOUT, FRONT FACE" in assembly
+    assert "INSERT 15-19, KEY N" in assembly
 
 
 def test_drc_flags_pins_not_in_the_insert():
@@ -89,3 +91,42 @@ def test_drc_warns_when_override_contact_differs_from_supplied():
     design = _design()
     design.connectors[0].contact_pn = "M39029/56-348"
     assert [f for f in run_drc(design).findings if f.rule == "Contacts" and f.item == "P1"]
+
+
+def test_nc_positions_and_pinouts_under_their_connectors():
+    design = _design(("A", "B"))
+    nc = design.unused_pins("P1")
+    assert len(nc) == 17 and "A" not in nc and "C" in nc
+    sheets = build_drawing(design)[0]
+    notes, wiring = sheet_to_svg(sheets[0]), sheet_to_svg(sheets[2])
+    assert "NC (NO CONNECTION) CONTACT POSITIONS: P1: C, D," in notes
+    assert wiring.count(">NC<") == 34                         # every unused position, both connectors
+    # each pinout sits under its own connector: left connector's view left of centre, right's right of centre
+    from cable_tool.canvas import Group, Text
+
+    av = next(it for it in sheets[1].root.items if isinstance(it, Group) and it.layer == "ASSEMBLY")
+    x0, _, x1, _ = av.bounds()
+    views = {t.s.split()[0]: v.dx for v in av.items if isinstance(v, Group) and v.layer == "FACE_VIEWS"
+             for t in v.items if isinstance(t, Text) and t.s.endswith("FRONT FACE")}
+    assert views["P1"] < (x0 + x1) / 2 < views["J1"]
+
+
+def test_numbered_connector_nc_from_contact_count():
+    from cable_tool.library import Part, PartsLibrary
+
+    lib = PartsLibrary({"C6": Part("C6", "connector", contacts=6)})
+    design = CableDesign(connectors=[ConnectorEnd("P1", "C6"), ConnectorEnd("P2", "C6")],
+                         wires=[Wire("W1", "P1", "1", "P2", "2")], library=lib)
+    assert design.unused_pins("P1") == ["2", "3", "4", "5", "6"]
+    assert design.unused_pins("P2") == ["1", "3", "4", "5", "6"]
+
+
+def test_cable_runs_into_the_connector():
+    from cable_tool.canvas import Group, Poly
+    from cable_tool.drawing import assembly_view
+
+    design = _design()
+    av = assembly_view(design, {})
+    cable = [p for p in av.items if isinstance(p, Poly) and p.width > 3]
+    assert min(min(x for x, _ in p.points) for p in cable) < 56     # starts inside the connector body (0..56)
+    assert isinstance(av, Group)
