@@ -1,7 +1,7 @@
 ; Inno Setup script: Windows installer with Start menu entry and .cbl file association.
-; Build after PyInstaller:  iscc /DAppVersion=0.4.1 packaging\installer.iss
+; Build after PyInstaller:  iscc /DAppVersion=0.4.2 packaging\installer.iss
 #ifndef AppVersion
-  #define AppVersion "0.4.1"
+  #define AppVersion "0.4.2"
 #endif
 
 [Setup]
