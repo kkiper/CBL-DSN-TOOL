@@ -42,6 +42,19 @@ python -m cable_desktop                # or: python -m cable_desktop project.cbl
 - **Design rule check** runs as you edit. Items with errors are outlined red on the canvas, warnings amber.
   Double-click a finding to jump to the item.
 - The **Drawing** tab previews every sheet. *Smallest sheet* sets the starting size (see below).
+- The **Calculators** tab has two calculators:
+  - **Wire size (AWG / CMA / mm²):** convert from an AWG (including 1/0 to 4/0), a CMA, a cross-section in mm², or
+    a custom conductor given as strand size (AWG, in or mm) and strand count. The result gives the CMA, the mm², the
+    equivalent solid AWG, the nearest M22759 size and the smallest M22759 size at least that big, plus typical
+    M22759/16 and /32 ODs. A reference table lists the M22759 stranding, CMA, mm² and OD by size; click a row to
+    load it.
+  - **Bundle diameter:** add M22759 wire rows (slash sheet and AWG, OD from the built-in table or the library) and
+    cable rows such as M27500 (OD from the parts library, or typed), each with a quantity. The bundle diameter uses
+    D = packing factor × √Σd², the same rule as the DRC; the packing factor defaults to 1.2 and can be changed.
+  - **Bundle options:** *Load from connector* fills the rows with what lands on a connector in the open project.
+    *Fit check* compares the bundle with a library backshell, boot and label using the DRC's rules. Each can be
+    switched off. *Copy* and *Export CSV* save the calculation.
+  - The stranding and OD values are nominal: check them against the current slash sheets.
 - *Design → Title block, revisions and notes* (Ctrl+T) fills the title block, application block, revision
   history and general notes. *File → Export drawing package* (Ctrl+E) writes PDF, DXF, SVG, BOM, DRC report and the
   project workbook.

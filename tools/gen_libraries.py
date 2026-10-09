@@ -10,7 +10,11 @@ illustration. Check every value against the current slash sheets / manufacturer 
 from __future__ import annotations
 
 import csv
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cable_tool import calc  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "libraries"
 HEADERS = ["P/N", "Type", "Description", "CAGE", "AWG", "OD", "AWG Min", "AWG Max", "Dia Min", "Dia Max",
@@ -74,17 +78,8 @@ def d38999_rows() -> list[list]:
 # --- M22759 wire ---------------------------------------------------------------------------------------
 COLORS = {0: "BLK", 1: "BRN", 2: "RED", 3: "ORN", 4: "YEL", 5: "GRN", 6: "BLU", 7: "VIO", 8: "GRY", 9: "WHT"}
 
-# Approximate nominal finished OD (in) by gauge
-WIRE_SPECS = {
-    "16": {
-        "desc": "WIRE, ETFE, TIN-COATED COPPER, 600 V, 150 C",
-        "od": {24: 0.046, 22: 0.052, 20: 0.062, 18: 0.071, 16: 0.081, 14: 0.099, 12: 0.120, 10: 0.153, 8: 0.215},
-    },
-    "32": {
-        "desc": "WIRE, XL-ETFE, TIN-COATED HS COPPER ALLOY, LIGHT WEIGHT, 600 V, 150 C",
-        "od": {26: 0.034, 24: 0.040, 22: 0.046, 20: 0.054, 18: 0.064, 16: 0.074, 14: 0.091, 12: 0.111},
-    },
-}
+# Approximate nominal finished OD (in) by gauge: shared with the desktop app's calculators
+WIRE_SPECS = calc.WIRE_SPECS
 
 
 def m22759_rows() -> list[list]:
