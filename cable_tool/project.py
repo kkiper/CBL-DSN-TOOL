@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .library import LIBRARY_COLUMNS, PartsLibrary, library_from_dataframe
+from .library import LIBRARY_COLUMNS, PartsLibrary, library_from_dataframe, parse_bool
 from .model import CableDesign, ConnectorEnd, Revision, Splice, Wire, WireGroup, natural_key
 
 # field -> accepted header spellings (normalised: lowercase alphanumerics only)
@@ -44,6 +44,8 @@ CONNECTOR_COLUMNS: dict[str, list[str]] = {
     "label_text": ["labeltext", "legend", "labellegend", "marking", "labelmarking", "text"],
     "length": ["length", "leglength", "breakoutlength", "lengthtobreakout", "len"],
     "contact_pn": ["contactpn", "contact", "contactpartnumber", "contacts"],
+    "show_shell": ["showshell", "shell", "shellport", "shellconnection", "showshellconnection"],
+    "pin_order": ["pinorder", "roworder", "pinsequence"],
 }
 
 GROUP_COLUMNS: dict[str, list[str]] = {
@@ -55,6 +57,7 @@ GROUP_COLUMNS: dict[str, list[str]] = {
     "term_from": ["shieldtermfrom", "termfrom", "shieldfrom", "fromshield", "shieldend1", "end1shield", "fromtermination"],
     "term_to": ["shieldtermto", "termto", "shieldto", "toshield", "shieldend2", "end2shield", "totermination"],
     "notes": ["notes", "note", "remarks", "twistrate", "laylength"],
+    "parent": ["within", "parent", "insideof", "inside", "partof", "overallshield", "parentgroup"],
 }
 
 SPLICE_COLUMNS: dict[str, list[str]] = {
@@ -79,10 +82,12 @@ CONNECTOR_HEADERS = {
     "ref": "Ref", "description": "Description", "connector_pn": "Connector P/N", "contact_pn": "Contact P/N",
     "backshell_pn": "Backshell P/N",
     "heatshrink_pn": "Heatshrink P/N", "label_pn": "Label P/N", "label_text": "Label Text", "length": "Length",
+    "show_shell": "Show Shell", "pin_order": "Pin Order",
 }
 GROUP_HEADERS = {
     "group_id": "Group", "kind": "Type", "cable_pn": "Cable P/N", "shield_pn": "Shield P/N",
     "shield_term_pn": "Shield Term P/N", "term_from": "Shield Term From", "term_to": "Shield Term To", "notes": "Notes",
+    "parent": "Within",
 }
 SPLICE_HEADERS = {"ref": "Ref", "splice_pn": "Splice P/N", "near": "Near", "distance": "Distance", "notes": "Notes"}
 TITLE_FIELDS = {
@@ -209,7 +214,8 @@ def connectors_from_dataframe(df: pd.DataFrame) -> list[ConnectorEnd]:
         out.append(ConnectorEnd(
             ref=get("ref"), description=get("description"), connector_pn=get("connector_pn"),
             backshell_pn=get("backshell_pn"), heatshrink_pn=get("heatshrink_pn"), label_pn=get("label_pn"),
-            label_text=get("label_text"), contact_pn=get("contact_pn"),
+            label_text=get("label_text"), contact_pn=get("contact_pn"), show_shell=bool(parse_bool(get("show_shell"))),
+            pin_order=[p.strip() for p in get("pin_order").split(",") if p.strip()],
             length=_number(row.get(mapping["length"])) if "length" in mapping else None,
         ))
     return out
@@ -226,7 +232,7 @@ def groups_from_dataframe(df: pd.DataFrame) -> list[WireGroup]:
             out.append(WireGroup(group_id=get("group_id"), kind=(get("kind") or "TWISTED PAIR").upper(),
                                  cable_pn=get("cable_pn"), shield_pn=get("shield_pn"),
                                  shield_term_pn=get("shield_term_pn"), term_from=get("term_from"),
-                                 term_to=get("term_to"), notes=get("notes")))
+                                 term_to=get("term_to"), notes=get("notes"), parent=get("parent")))
     return out
 
 
@@ -434,7 +440,10 @@ def wires_to_dataframe(wires: list[Wire]) -> pd.DataFrame:
 
 
 def connectors_to_dataframe(connectors: list[ConnectorEnd]) -> pd.DataFrame:
-    return pd.DataFrame([{h: getattr(c, f) for f, h in CONNECTOR_HEADERS.items()} for c in connectors],
+    def cell(c, f):
+        v = getattr(c, f)
+        return ", ".join(v) if isinstance(v, list) else v
+    return pd.DataFrame([{h: cell(c, f) for f, h in CONNECTOR_HEADERS.items()} for c in connectors],
                         columns=list(CONNECTOR_HEADERS.values()))
 
 

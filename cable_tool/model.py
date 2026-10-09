@@ -21,6 +21,8 @@ class ConnectorEnd:
     length: float | None = None   # distance from the connector face to the breakout (or the far end)
     description: str = ""         # e.g. "TO FLIGHT COMPUTER"
     contact_pn: str = ""          # contact used in this connector (else the library's default)
+    show_shell: bool = False      # show the connector's SHELL connection (shield-to-shell/backshell) on the canvas
+    pin_order: list = field(default_factory=list)   # display order of the pin rows (canvas and wiring diagram)
 
     @property
     def legend(self) -> str:
@@ -59,8 +61,9 @@ class WireGroup:
     shield_pn: str = ""           # overall braid / shield sleeving for a built-up group
     shield_term_pn: str = ""      # shield termination part (solder sleeve, band, ...) per terminated end
     term_from: str = ""           # shield at the group's From end: BACKSHELL, FLOAT, or a pin (12 / P1-12)
-    term_to: str = ""             # shield at the group's To end
+    term_to: str = ""             # shield at the group's To end (and at every other far end of an overall shield)
     notes: str = ""
+    parent: str = ""              # enclosing group, e.g. the overall shield this pair or cable runs inside
 
     @property
     def twisted(self) -> bool:
@@ -166,8 +169,30 @@ class CableDesign:
     def is_splice(self, ref: str) -> bool:
         return self.splice(ref) is not None or (self.connector(ref) is None and bool(SPLICE_REF.match(ref or "")))
 
+    def group_chain(self, gid: str) -> list[str]:
+        """``gid`` and the groups enclosing it, innermost first (stops at a missing group or a cycle)."""
+        chain: list[str] = []
+        while gid and gid not in chain:
+            chain.append(gid)
+            g = self.group(gid)
+            gid = g.parent if g else ""
+        return chain
+
     def group_members(self, gid: str) -> list[Wire]:
+        """Every wire inside group ``gid``, including the wires of groups nested in it."""
+        return [w for w in self.wires if w.group and gid in self.group_chain(w.group)]
+
+    def direct_members(self, gid: str) -> list[Wire]:
+        """Wires assigned to ``gid`` itself (not through a nested group)."""
         return [w for w in self.wires if w.group == gid]
+
+    def group_children(self, gid: str) -> list[WireGroup]:
+        return [g for g in self.groups if g.parent == gid and g.group_id != gid]
+
+    def group_level(self, gid: str) -> int:
+        """Nesting depth below ``gid``: 0 for a group with no nested groups, 1 for a shield over pairs, ..."""
+        kids = [k for k in self.group_children(gid) if self.group_members(k.group_id)]
+        return 1 + max(self.group_level(k.group_id) for k in kids) if kids and len(self.group_chain(gid)) < 20 else 0
 
     def description(self, pn: str) -> str:
         return (self.part_descriptions.get(pn) or self.library.description(pn) or "").strip()
@@ -247,13 +272,44 @@ class CableDesign:
         members = self.group_members(gid)
         return (members[0].from_ref, members[0].to_ref) if members else ("", "")
 
+    def group_refs(self, gid: str) -> list[str]:
+        """Connectors and splices a group's wires end at, its From end first."""
+        members = self.group_members(gid)
+        if not members:
+            return []
+        refs = [members[0].from_ref, members[0].to_ref]
+        for w in members[1:]:
+            refs += [w.from_ref, w.to_ref]
+        return list(dict.fromkeys(r for r in refs if r))
+
     def shield_term_at(self, g: WireGroup, ref: str) -> str:
+        """Shield termination at ``ref``: term_from at the group's From end, term_to at every other end."""
         a, b = self.group_ends(g.group_id)
         if ref == a:
             return g.term_from
-        if ref == b:
+        if ref == b or ref in self.group_refs(g.group_id):
             return g.term_to
         return ""
+
+    def shell_terminations(self, ref: str) -> list[WireGroup]:
+        """Shielded groups whose shield is terminated to connector ``ref``'s shell or backshell."""
+        out = []
+        for g in self.groups:
+            if g.shielded and self.group_members(g.group_id):
+                kind, _ = parse_shield_term(self.shield_term_at(g, ref), ref)
+                if kind == SHIELD_BACKSHELL:
+                    out.append(g)
+        return out
+
+    def shell_shown(self, ref: str) -> bool:
+        """Show the SHELL connection of ``ref``: switched on, or a shield is terminated to it."""
+        c = self.connector(ref)
+        return bool(c) and (c.show_shell or bool(self.shell_terminations(ref)))
+
+    def shell_name(self, ref: str) -> str:
+        """What a SHELL termination lands on: the backshell if the connector has one, else the connector shell."""
+        c = self.connector(ref)
+        return "BACKSHELL" if c and c.backshell_pn else "CONNECTOR SHELL"
 
     def shield_pins(self, ref: str) -> list[tuple[WireGroup, str]]:
         """Shield terminations that land on a pin of connector ``ref``: [(group, pin)]."""
@@ -291,6 +347,35 @@ class CableDesign:
         if part and part.contacts and all(p.isdigit() for p in used):
             return [str(i) for i in range(1, int(part.contacts) + 1)]
         return []
+
+    def pin_sort_key(self, ref: str):
+        """Sort key for ``ref``'s pins: the connector's own row order first, then natural order."""
+        c = self.connector(ref)
+        order = {p: i for i, p in enumerate(c.pin_order)} if c else {}
+        return lambda pin: (0, order[pin], []) if pin in order else (1, 0, natural_key(pin))
+
+    def pin_group(self, ref: str, pin: str) -> str:
+        """Innermost group of whatever is on ``ref``-``pin`` (a wire, or a shield drain), or ''."""
+        for w in self.wires:
+            if w.group and ((w.from_ref, w.from_pin) == (ref, pin) or (w.to_ref, w.to_pin) == (ref, pin)):
+                return w.group
+        for g, p in self.shield_pins(ref):
+            if p == pin:
+                return g.group_id
+        return ""
+
+    def arranged_pins(self, ref: str, pins: list[str]) -> list[str]:
+        """``pins`` reordered so the pins of each group (shield, pair, cable) are neighbours, nested groups inside
+        their shield; otherwise the given order is kept."""
+        pos = {p: i for i, p in enumerate(pins)}
+        first: dict[str, int] = {}
+        chains = {}
+        for p in pins:
+            chain = list(reversed(self.group_chain(self.pin_group(ref, p))))     # outermost first
+            chains[p] = chain
+            for gid in chain:
+                first.setdefault(gid, pos[p])
+        return sorted(pins, key=lambda p: [first[g] for g in chains[p]] + [pos[p]])
 
     def unused_pins(self, ref: str) -> list[str]:
         """Contact positions of ``ref`` with nothing connected (NC)."""
