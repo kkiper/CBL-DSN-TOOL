@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 from cable_desktop import __version__  # noqa: E402
 
 datas = [(str(p), "samples") for p in (ROOT / "samples").glob("*.csv")]
+datas += [(str(p), "libraries") for p in (ROOT / "libraries").glob("*.csv")]
 datas += [(str(ROOT / "packaging" / "icon.png"), "packaging")]
 datas += collect_data_files("reportlab")          # fonts and metrics used for PDF output
 
