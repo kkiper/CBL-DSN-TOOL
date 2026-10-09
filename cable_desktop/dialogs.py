@@ -86,6 +86,14 @@ class DesignDialog(QDialog):
         form.addRow("Overall length (two-connector cable)", self.length)
         form.addRow(QLabel("For a harness with a breakout, enter each connector's length to the breakout in the "
                            "Connectors table instead."))
+        self.datum = QComboBox()
+        self.datum.addItem("(first connector)", "")
+        for c in doc.design.connectors:
+            self.datum.addItem(c.ref, c.ref)
+        self.datum.setCurrentIndex(max(self.datum.findData(doc.design.datum), 0))
+        form.addRow("Datum A (IPC-D-620)", self.datum)
+        form.addRow(QLabel("Dimensions are measured from the datum connector's face; breakout lengths from the harness "
+                           "centerline at the breakout to each termination."))
         tabs.addTab(page, "Lengths and units")
 
         rev = RecordTable(doc, "revisions")
@@ -109,12 +117,13 @@ class DesignDialog(QDialog):
     def accept(self):
         values = {k: e.text().strip() for k, e in self.edits.items()}
         units, tol, length = self.units.currentText(), self.tol.text().strip() or "0.5", self.length.value() or None
+        datum = self.datum.currentData() or ""
         notes = [n for n in self.notes.toPlainText().splitlines() if n.strip()]
 
         def apply(d):
             for k, v in values.items():
                 setattr(d.title_block, k, v)
-            d.units, d.tolerance, d.overall_length, d.notes = units, tol, length, notes
+            d.units, d.tolerance, d.overall_length, d.notes, d.datum = units, tol, length, notes, datum
         self.doc.edit("Title block and settings", apply)
         super().accept()
 

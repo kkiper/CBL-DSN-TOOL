@@ -344,6 +344,8 @@ def _apply_title_sheet(design: CableDesign, raw: pd.DataFrame) -> None:
             design.tolerance = value
         elif key == "overalllength":
             design.overall_length = _number(value)
+        elif key in ("datum", "datumconnector"):
+            design.datum = value
 
 
 def add_connectors(design: CableDesign, connectors: list[ConnectorEnd]) -> None:
@@ -466,7 +468,8 @@ def save_design(design: CableDesign) -> bytes:
 
     title = pd.DataFrame(
         [(label, getattr(design.title_block, f)) for f, label in TITLE_FIELDS.items()]
-        + [("Units", design.units), ("Tolerance", design.tolerance), ("Overall Length", design.overall_length)],
+        + [("Units", design.units), ("Tolerance", design.tolerance), ("Overall Length", design.overall_length),
+           ("Datum", design.datum)],
         columns=["Field", "Value"],
     )
     parts = library_with_descriptions(design).to_dataframe()

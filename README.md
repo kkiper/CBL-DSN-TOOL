@@ -209,6 +209,20 @@ counts once, at its OD or at its members' bundle plus shield wall). It uses the 
 *D ≈ 1.2 × √(Σ dᵢ²)*. Wire ODs come from the library, or are estimated from AWG for thin-wall wire, and the report says
 when they were estimated. The calculated diameters are also added to the drawing notes.
 
+### Dimensioning (IPC-D-620)
+
+- **Datum:** every harness dimension is measured from **DATUM A**, the face of the datum connector. By default that
+  is the first connector; pick another under *Title block and settings → Lengths and units*, with `--datum P2` on the
+  command line, or with a `Datum` row in the workbook's title sheet. The datum connector is drawn at the left and
+  marked with an ASME Y14.5 datum feature symbol.
+- **Harness length:** for a two-connector cable, the overall dimension runs from DATUM A to the far connector face.
+- **Breakout lengths:** the datum leg is dimensioned from DATUM A to the breakout centerline. Each branch is
+  dimensioned from the harness centerline at the breakout to its connector face.
+- **Splices:** you still enter a splice by its nearest connector and the distance from that face. The drawing and
+  splice table convert that to the IPC reference: from DATUM A along a two-connector cable or on the datum leg, and
+  from the breakout centerline on a branch.
+- **Note:** a general note states the convention.
+
 ### Lengths and quantities
 
 - **Two-connector cable:** enter the overall length (sidebar or `--length`). **Harness with a breakout:** enter each

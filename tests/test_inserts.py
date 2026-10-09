@@ -130,3 +130,25 @@ def test_cable_runs_into_the_connector():
     cable = [p for p in av.items if isinstance(p, Poly) and p.width > 3]
     assert min(min(x for x, _ in p.points) for p in cable) < 56     # starts inside the connector body (0..56)
     assert isinstance(av, Group)
+
+
+def test_ipc_d_620_dimensions_from_datum():
+    from cable_tool.drawing import assign_sides, splice_location
+    from cable_tool.model import Splice
+
+    # Two-connector cable: a splice entered near the far end is dimensioned from DATUM A (the first connector)
+    design = _design()
+    design.overall_length = 48
+    design.splices = [Splice("SP1", near="J1", distance=6)]
+    assert splice_location(design, design.splices[0]) == (42, "DATUM A (P1 FACE)")
+    design.datum = "J1"
+    assert splice_location(design, design.splices[0]) == (6, "DATUM A (J1 FACE)")
+    assert assign_sides(design)[0][0].ref == "J1"            # the datum connector is drawn first (left)
+    # Harness: a splice on a branch is located from the breakout centerline
+    harness = CableDesign(connectors=[ConnectorEnd("P1", "X", length=18), ConnectorEnd("P2", "X", length=30),
+                                      ConnectorEnd("P3", "X", length=42.5)],
+                          splices=[Splice("SP1", near="P3", distance=10), Splice("SP2", near="P1", distance=5)])
+    assert splice_location(harness, harness.splices[0]) == (32.5, "BREAKOUT CENTERLINE (TOWARD P3)")
+    assert splice_location(harness, harness.splices[1]) == (5, "DATUM A (P1 FACE)")
+    svg = sheet_to_svg(build_drawing(design)[0][1])
+    assert ">A<" in svg                                        # datum feature symbol

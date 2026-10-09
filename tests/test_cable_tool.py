@@ -117,7 +117,7 @@ def test_drawing_sheets(size):
     svg1 = sheet_to_svg(sheets[0])          # notes and parts list
     for text in ("D38999/26WD18SN", "PARTS LIST", "FIND NO", "NOMENCLATURE OR DESCRIPTION", "W101-001",
                  f"1 OF {n}", "REVISIONS", "INITIAL RELEASE", "UNLESS OTHERWISE SPECIFIED:",
-                 "THIRD ANGLE PROJECTION", "APPLICATION", "NOTES:"):
+                 "THIRD ANGLE PROJECTION", "APPLICATION", "NOTES:", "DIMENSIONS PER IPC-D-620"):
         assert text in svg1, text
     assembly = sheet_to_svg(sheets[1])      # assembly view with pinouts
     for text in (">48<", "W101-P1", ">SP1<", f"2 OF {n}", "P1 PINOUT, FRONT FACE", "P2 PINOUT, FRONT FACE"):
@@ -126,7 +126,7 @@ def test_drawing_sheets(size):
     assert "RS422 TX+" in svg2 and "W3  22 AWG  WHT" in svg2 and ">NC<" in svg2
     tables = "".join(sheet_to_svg(sh) for sh in sheets[3:])
     for text in ("LABEL SCHEDULE", "WIRE GROUPS AND SHIELDS", "SHIELDED TWISTED PAIR", "P1: BACKSHELL", "P2: PIN L",
-                 "SPLICES", "6 IN FROM P2 FACE"):
+                 "SPLICES", "42 IN FROM DATUM A (P1 FACE)"):
         assert text in tables
     # Every text item meets the ASME Y14.2 minimum letter height
     fmt = [f for f in run_drc(design, sheets).findings if f.rule == "Drawing format"]

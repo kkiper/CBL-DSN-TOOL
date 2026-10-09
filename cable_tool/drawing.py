@@ -365,10 +365,13 @@ def draw_table(g: Group, x: float, y: float, headers: list[str], rows: list[list
 # Connector side assignment (shared by the assembly view and wiring diagram)
 # ---------------------------------------------------------------------------
 def assign_sides(design: CableDesign) -> tuple[list[ConnectorEnd], list[ConnectorEnd]]:
-    """Split connectors into a left and right column so most wires cross the cable."""
+    """Split connectors into a left and right column so most wires cross the cable. The datum connector comes first
+    (top left)."""
     conns = list(design.connectors)
     if not conns:
         return [], []
+    datum = design.datum_ref()
+    conns.sort(key=lambda c: c.ref != datum)
     left, right = [conns[0]], []
     for c in conns[1:]:
         to_left = to_right = 0
@@ -472,6 +475,32 @@ def draw_connector_end(g: Group, x_face: float, y: float, d: int, c: ConnectorEn
             g.text(f(-6), y + 3 + (i - (len(lines) - 1) / 2) * (T + 2), line, size=T, anchor="end" if d == 1 else "start")
 
 
+def datum_symbol(g: Group, x: float, y: float, d: int, letter: str) -> None:
+    """ASME Y14.5 datum feature symbol: filled triangle on the extension line at (x, y), leader and framed letter
+    in direction d."""
+    g.poly([(x, y - 4), (x, y + 4), (x + d * 7, y)], closed=True, fill="#000000", width=THIN)
+    g.line(x + d * 7, y, x + d * 14, y, width=THIN)
+    bx = x + d * 14 + (0 if d == 1 else -16)
+    g.rect(bx, y - 8, 16, 16, fill="#ffffff", width=THIN)
+    g.text(bx + 8, y + 3, letter, size=T, bold=True, anchor="middle")
+
+
+def splice_location(design: CableDesign, sp) -> tuple[float | None, str]:
+    """Location of a splice per IPC-D-620: (distance, reference). Measured from DATUM A along the datum leg and along a
+    two-connector cable; from the harness centerline at the breakout on a branch. None if a needed length is unknown."""
+    datum = design.datum_ref()
+    if sp.distance is None or not sp.near:
+        return None, ""
+    datum_ref = f"DATUM A ({datum} FACE)"
+    if sp.near == datum:
+        return sp.distance, datum_ref
+    if len(design.connectors) == 2:
+        total = design.end_to_end_length()
+        return (total - sp.distance if total is not None else None), datum_ref
+    leg = design.leg_length(sp.near)
+    return (leg - sp.distance if leg is not None else None), f"BREAKOUT CENTERLINE (TOWARD {sp.near})"
+
+
 def break_symbol(g: Group, x: float, y: float) -> None:
     g.rect(x - 4, y - CABLE_W / 2 - 2, 8, CABLE_W + 4, fill="#ffffff", stroke=None)
     for dx in (-4, 4):
@@ -571,8 +600,10 @@ def assembly_view(design: CableDesign, items: dict[str, int], marks: _Marks | No
                 balloon(g, x0 + d * (k % per_row) * 2 * BALLOON_R,
                         y0 + bal_side * (k // per_row) * 2 * BALLOON_R, item, marks, flag_dir=d)
 
-    # Splices: marker on the leg, find number, and a dimension from the connector face (datum)
+    # Splices: marker on the leg, find number, and a dimension per IPC-D-620: from DATUM A on the datum leg (and
+    # along a two-connector cable), from the harness centerline at the breakout on a branch
     leg_of = {c.ref: (face, y, d, c) for c, face, y, d in legs}
+    datum = design.datum_ref()
     for sp in used_splices:
         if sp.ref not in located or sp.near not in leg_of:
             continue
@@ -591,8 +622,14 @@ def assembly_view(design: CableDesign, items: dict[str, int], marks: _Marks | No
             balloon(g, x, by_, items[sp.splice_pn], marks, (x, y + side * (CABLE_W / 2 + 3)))
         g.text(x + d * 14 if sp.splice_pn in items else x, by_ + 3 + (0 if sp.splice_pn in items else 0), sp.ref,
                size=T, bold=True, anchor="start" if d == 1 else "end")
-        dimension(g, face, x, y + dim_side * SPLICE_DIM_OFF, y + dim_side * 34, y + dim_side * (CABLE_W / 2 + 5),
-                  _dim_text(sp.distance, design))
+        value, _ref = splice_location(design, sp)
+        if straight or sp.near == datum:
+            dface = leg_of[datum][0]
+            dimension(g, dface, x, y + dim_side * SPLICE_DIM_OFF, y + dim_side * 34, y + dim_side * (CABLE_W / 2 + 5),
+                      _dim_text(value, design))
+        else:
+            dimension(g, bx, x, y + dim_side * SPLICE_DIM_OFF, by + dim_side * 12, y + dim_side * (CABLE_W / 2 + 5),
+                      _dim_text(value, design))
 
     if straight:
         (_, fa, ya, _), (_, fb, yb, _) = legs
@@ -601,6 +638,11 @@ def assembly_view(design: CableDesign, items: dict[str, int], marks: _Marks | No
         for c, face, y, d in legs:
             s = -1 if y < by - 1 else 1
             dimension(g, face, bx, y + s * DIM_OFF, y + s * 34, by + s * 12, _dim_text(c.length, design))
+
+    # DATUM A: the datum connector's face (IPC-D-620), on its extension line
+    face, y, d, _c = leg_of[datum]
+    s = 1 if (straight or y >= by - 1) else -1
+    datum_symbol(g, face, y + s * 58, -d, "A")
 
     for c, face, y, d in legs:
         v = views.get(c.ref)
@@ -881,8 +923,15 @@ def auto_notes(design: CableDesign, bom: list[BomItem], table_sheets: tuple[int,
     if used_splices:
         tables.append("SPLICES")
     tables.append("LABEL SCHEDULE")
+    datum = design.datum_ref()
+    dim_note = Note(f"DIMENSIONS PER IPC-D-620: HARNESS DIMENSIONS, INCLUDING BREAKOUT AND SPLICE LOCATIONS, ARE MEASURED "
+                    f"FROM DATUM A, THE {datum} CONNECTOR FACE. HARNESS LENGTH IS MEASURED FROM DATUM A TO THE FINAL "
+                    f"TERMINATION. BREAKOUT LENGTHS ARE MEASURED FROM THE APPROXIMATE CENTERLINE OF THE HARNESS AT THE "
+                    f"BREAKOUT TO THE FINAL TERMINATION.") if datum else None
     notes = [Note(f"ASSEMBLY VIEW AND CONNECTOR PINOUTS ON SHEET {ASSEMBLY_SHEET}. WIRING DIAGRAM ON SHEET "
                   f"{WIRING_SHEET}. {', '.join(tables[:-1])} AND {tables[-1]} ON {sheets}.")]
+    if dim_note:
+        notes.append(dim_note)
     supplied = [c for c in design.connectors if design.contacts_included(c.ref) and design.pins_used(c.ref)]
     if supplied:
         finds = sorted({b.item for b in bom if b.category == "connector" and any(b.pn == c.connector_pn for c in supplied)})
@@ -1003,7 +1052,8 @@ def splice_rows(design: CableDesign, items: dict[str, int]) -> tuple[list[str], 
         wires = [w.wire_id for w in design.wires if sp.ref in (w.from_ref, w.to_ref)]
         if not wires:
             continue
-        loc = f"{fmt_length(sp.distance)} {design.units} FROM {sp.near} FACE" if sp.near and sp.distance is not None else "AR"
+        value, ref = splice_location(design, sp)
+        loc = f"{fmt_length(value)} {design.units} FROM {ref}" if value is not None else "AR"
         rows.append([sp.ref, str(items.get(sp.splice_pn, "")), sp.splice_pn, loc, ", ".join(wires), sp.notes])
     return headers, rows
 

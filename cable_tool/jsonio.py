@@ -35,6 +35,7 @@ def design_to_dict(design: CableDesign) -> dict:
         "units": design.units,
         "tolerance": design.tolerance,
         "overall_length": design.overall_length,
+        "datum": design.datum,
     }
 
 
@@ -58,6 +59,7 @@ def design_from_dict(data: dict) -> CableDesign:
         units=data.get("units", "IN"),
         tolerance=data.get("tolerance", "0.5"),
         overall_length=data.get("overall_length"),
+        datum=data.get("datum", ""),
     )
     if data.get("sheet_size"):
         d.sheet_size = data["sheet_size"]

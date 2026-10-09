@@ -151,6 +151,7 @@ class CableDesign:
     units: str = "IN"
     tolerance: str = "0.5"
     overall_length: float | None = None   # used for two-connector cables when ends have no lengths
+    datum: str = ""                       # connector whose face is DATUM A (IPC-D-620); blank = the first connector
 
     # Lookups ---------------------------------------------------------------
     def connector(self, ref: str) -> ConnectorEnd | None:
@@ -186,6 +187,12 @@ class CableDesign:
             return c.contact_pn
         part = self.library.get(c.connector_pn)
         return part.contact_pn if part else ""
+
+    def datum_ref(self) -> str:
+        """Connector whose face is the dimensioning datum (IPC-D-620): ``datum`` if set, else the first connector."""
+        if self.datum and self.connector(self.datum):
+            return self.datum
+        return self.connectors[0].ref if self.connectors else ""
 
     # Lengths ---------------------------------------------------------------
     def leg_length(self, ref: str) -> float | None:
