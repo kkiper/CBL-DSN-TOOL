@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from .bom import check_design
+from .inserts import layout_for
 from .library import Part, bundle_diameter, circular_mils, parse_awg, typical_od
 from .model import SHIELD_BACKSHELL, SHIELD_FLOAT, CableDesign, Wire, WireGroup, fmt_dia, parse_shield_term
 
@@ -211,6 +212,10 @@ class _Checker:
         for c in self.d.connectors:
             conn = self.part(c.connector_pn, "connector", c.ref)
             contact_pn = self.d.contact_pn(c.ref)
+            if conn and conn.contact_pn and c.contact_pn and c.contact_pn != conn.contact_pn and self.d.contacts_included(c.ref):
+                self.r.add(WARNING, "Contacts", c.ref,
+                           f"{c.connector_pn} is supplied with {conn.contact_pn} contacts, but the connector table "
+                           f"specifies {c.contact_pn}. Use the supplied contacts, or order the -LC (less contacts) version.")
             contact = self.part(contact_pn, "contact", c.ref)
             # The contact's range wins; a connector row may carry the range when contacts aren't separate.
             source = contact if contact and (contact.awg_range or any(contact.dia_range)) else conn
@@ -221,6 +226,16 @@ class _Checker:
                            f"{len(pins)} pins are used but {c.connector_pn} has {int(conn.contacts)} contacts.")
             if not pins:
                 continue
+            found = layout_for(c.connector_pn)
+            if found:
+                info, cavs = found
+                known = {cav.contact for cav in cavs}
+                bad = [p for p in pins if p not in known]
+                if bad:
+                    self.r.add(ERROR, "Contact position", c.ref,
+                               f"Pin(s) {', '.join(bad)} aren't in insert arrangement {info.insert_name} of "
+                               f"{c.connector_pn} (contacts {', '.join(cav.contact for cav in cavs[:3])} … "
+                               f"{cavs[-1].contact}). Contact labels are case-sensitive.")
             awg_range = source.awg_range if source else None
             if source and awg_range is None:
                 self.no_param[(source_pn, "AWG Min/Max")].add(c.ref)

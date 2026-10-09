@@ -59,7 +59,7 @@ def build_bom(design: CableDesign) -> list[BomItem]:
     for c in design.connectors:
         add(c.connector_pn, "connector", 1, "EA", c.ref)
         pins = design.pins_used(c.ref)
-        if pins:
+        if pins and not design.contacts_included(c.ref):   # contacts supplied with the connector aren't ordered
             add(design.contact_pn(c.ref), "contact", len(pins), "EA", c.ref)
         add(c.backshell_pn, "backshell", 1, "EA", c.ref)
         add(c.heatshrink_pn, "heatshrink", 1, "EA", c.ref)

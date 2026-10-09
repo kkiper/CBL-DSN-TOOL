@@ -9,7 +9,7 @@ Type               Parameters used
 =================  ====================================================================
 wire               AWG, OD (insulation), Color
 cable              OD (jacket), Conductors, AWG  (jacketed / shielded multi-conductor cable)
-connector          Contact P/N (default contact), Contacts (cavity count),
+connector          Contact P/N (default contact), Contacts (cavity count), Contacts Included (YES/NO),
                    AWG Min/Max and Dia Min/Max (wire sealing range) if contacts aren't separate
 contact            AWG Min/Max (accepted wire), Dia Min/Max (insulation OD sealing range)
 backshell          Dia Min/Max = cable clamp range
@@ -70,6 +70,7 @@ LIBRARY_COLUMNS: dict[str, list[str]] = {
     "wall": ["wall", "wallthickness", "thickness", "shieldwall"],
     "color": ["color", "colour"],
     "cage": ["cage", "cagecode", "fscm", "mfrcage", "manufacturercage"],
+    "contacts_included": ["contactsincluded", "includescontacts", "withcontacts", "contactsincl", "suppliedwithcontacts"],
     "notes": ["notes", "note", "remarks", "source"],
 }
 NUMERIC = {"od", "dia_min", "dia_max", "wall"}            # lengths (inches)
@@ -79,7 +80,8 @@ LIBRARY_HEADERS = {
     "pn": "P/N", "type": "Type", "description": "Description", "awg": "AWG", "od": "OD",
     "awg_min": "AWG Min", "awg_max": "AWG Max", "dia_min": "Dia Min", "dia_max": "Dia Max",
     "cma_min": "CMA Min", "cma_max": "CMA Max", "contact_pn": "Contact P/N", "contacts": "Contacts",
-    "conductors": "Conductors", "wall": "Wall", "color": "Color", "cage": "CAGE", "notes": "Notes",
+    "conductors": "Conductors", "wall": "Wall", "color": "Color", "cage": "CAGE",
+    "contacts_included": "Contacts Included", "notes": "Notes",
 }
 
 
@@ -108,6 +110,7 @@ class Part:
     cma_max: float | None = None
     contact_pn: str = ""
     contacts: float | None = None
+    contacts_included: bool | None = None   # connector supplied with its contacts (None = not stated)
     conductors: float | None = None
     wall: float | None = None
     color: str = ""
@@ -166,9 +169,37 @@ class PartsLibrary:
 def _fmt(v):
     if v is None:
         return None
+    if isinstance(v, bool):
+        return "YES" if v else "NO"
     if isinstance(v, float) and v.is_integer():
         return int(v)
     return v
+
+
+def parse_bool(text: str) -> bool | None:
+    t = str(text or "").strip().upper()
+    if t in ("Y", "YES", "TRUE", "1", "X", "INCLUDED", "INCL"):
+        return True
+    if t in ("N", "NO", "FALSE", "0", "LC", "LESS CONTACTS", "SEPARATE"):
+        return False
+    return None
+
+
+LESS_CONTACTS_SUFFIX = "-LC"
+
+
+def contacts_included(pn: str, part: "Part | None") -> bool:
+    """Whether connector ``pn`` is supplied with its contacts.
+
+    The library's *Contacts Included* value wins. Otherwise D38999 part numbers include their contacts
+    unless they end in -LC ("less contacts").
+    """
+    if part is not None and part.contacts_included is not None:
+        return part.contacts_included
+    pn = (pn or "").strip().upper()
+    if pn.startswith("D38999/"):
+        return not pn.endswith(LESS_CONTACTS_SUFFIX)
+    return False
 
 
 def normalize_type(value: str) -> str:
@@ -244,6 +275,8 @@ def library_from_dataframe(df: pd.DataFrame, source: str = "") -> PartsLibrary:
                 setattr(p, f.name, _num(raw))
             elif f.name == "type":
                 p.type = normalize_type(_cell(raw))
+            elif f.name == "contacts_included":
+                p.contacts_included = parse_bool(_cell(raw))
             else:
                 setattr(p, f.name, _cell(raw))
         if "awg_range" in mapping and p.awg_min is None and p.awg_max is None:

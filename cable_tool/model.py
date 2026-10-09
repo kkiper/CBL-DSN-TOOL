@@ -171,6 +171,13 @@ class CableDesign:
     def description(self, pn: str) -> str:
         return (self.part_descriptions.get(pn) or self.library.description(pn) or "").strip()
 
+    def contacts_included(self, ref: str) -> bool:
+        """Is connector ``ref`` supplied with its contacts (so they aren't ordered separately)?"""
+        from .library import contacts_included
+
+        c = self.connector(ref)
+        return bool(c) and contacts_included(c.connector_pn, self.library.get(c.connector_pn))
+
     def contact_pn(self, ref: str) -> str:
         c = self.connector(ref)
         if not c:

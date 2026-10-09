@@ -54,7 +54,7 @@ def test_parts_list_find_numbers_flags_and_cage():
     assert set(meta["balloons"]) <= set(meta["find_numbers"])
     assert meta["flag_notes"]["splice"] and meta["flag_notes"]["label"]
     svg = sheet_to_svg(sheets[0])
-    assert ">81349<" in svg and "INSTALL SPLICE (FIND NO. 16) AT LOCATION SHOWN" in svg
+    assert ">81349<" in svg and "INSTALL SPLICE (FIND NO. 14) AT LOCATION SHOWN" in svg
     assert not any(f.severity == "ERROR" for f in run_drc(design, sheets).findings if f.rule == "Drawing format")
 
 

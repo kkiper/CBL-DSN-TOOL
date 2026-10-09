@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from cable_tool.drawing import assign_sides
 from cable_tool.drc import ERROR, WARNING
+from cable_tool.inserts import layout_for
 from cable_tool.model import CableDesign, ConnectorEnd, Splice, Wire, WireGroup, natural_key
 
 from .document import Document
@@ -56,6 +57,10 @@ def wire_color(w: Wire) -> QColor:
 def connector_pins(design: CableDesign, c: ConnectorEnd) -> list[str]:
     """Pins shown on the canvas: the connector's contact positions (from the library) plus any used pins."""
     used = design.pins_used(c.ref)
+    found = layout_for(c.connector_pn)
+    if found:   # known insert arrangement: its contact labels, in catalogue order, then any stray pins
+        known = [cav.contact for cav in found[1]]
+        return known + [p for p in used if p not in known]
     part = design.library.get(c.connector_pn)
     n = int(part.contacts) if part and part.contacts else 0
     pins = list(used)

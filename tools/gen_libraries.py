@@ -14,7 +14,7 @@ from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[1] / "libraries"
 HEADERS = ["P/N", "Type", "Description", "CAGE", "AWG", "OD", "AWG Min", "AWG Max", "Dia Min", "Dia Max",
-           "Contact P/N", "Contacts", "Color", "Notes"]
+           "Contact P/N", "Contacts", "Contacts Included", "Color", "Notes"]
 VERIFY = "SAMPLE DATA - VERIFY AGAINST CURRENT SPEC SHEET"
 
 # --- D38999 Series III -------------------------------------------------------------------------------
@@ -50,20 +50,24 @@ def d38999_rows() -> list[list]:
     for size, c in CONTACTS.items():
         for gender, pn in (("SOCKET", c["socket"]), ("PIN", c["pin"])):
             rows.append([pn, "contact", f"CONTACT, {gender}, CRIMP, SIZE {size}", "", "", "", c["awg"][0], c["awg"][1],
-                         c["seal"][0], c["seal"][1], "", "", "", f"D38999 SERIES III. AWG {c['awg'][0]}-{c['awg'][1]}. "
+                         c["seal"][0], c["seal"][1], "", "", "", "", f"D38999 SERIES III. AWG {c['awg'][0]}-{c['awg'][1]}. "
                          f"Dia = approx. wire sealing range. {VERIFY}"])
     for cls, kind in CLASSES.items():
         for finish, fin_desc in FINISHES.items():
             for (shell, arr), (count, size) in sorted(INSERTS.items(), key=lambda kv: (SHELLS[kv[0][0]], kv[0][1])):
                 for g, (contact_kind, short) in GENDERS.items():
-                    pn = f"D38999/{cls}{finish}{shell}{arr}{g}N"
-                    desc = (f"CONNECTOR, {kind}, D38999 SERIES III, SHELL {SHELLS[shell]}, {count} {short} SIZE {size}, "
-                            f"{fin_desc}")
-                    notes = f"INSERT {SHELLS[shell]}-{arr}, N KEY. Contacts supplied separately. {VERIFY}"
-                    if finish == "W":
-                        notes = "CADMIUM FINISH: CHECK HAZARDOUS-MATERIAL RESTRICTIONS. " + notes
-                    rows.append([pn, "connector", desc, "", "", "", "", "", "", "", CONTACTS[size][contact_kind], count,
-                                 "", notes])
+                    contact = CONTACTS[size][contact_kind]
+                    base = f"D38999/{cls}{finish}{shell}{arr}{g}N"
+                    # D38999 part numbers include their contacts; the -LC ("less contacts") version doesn't
+                    for pn, included in ((base, True), (base + "-LC", False)):
+                        desc = (f"CONNECTOR, {kind}, D38999 SERIES III, SHELL {SHELLS[shell]}, {count} {short} SIZE {size}, "
+                                f"{fin_desc}" + ("" if included else ", LESS CONTACTS"))
+                        supply = f"Supplied with {contact} contacts." if included else f"Less contacts: order {contact} separately."
+                        notes = f"INSERT {SHELLS[shell]}-{arr}, N KEY. {supply} {VERIFY}"
+                        if finish == "W":
+                            notes = "CADMIUM FINISH: CHECK HAZARDOUS-MATERIAL RESTRICTIONS. " + notes
+                        rows.append([pn, "connector", desc, "", "", "", "", "", "", "", contact, count,
+                                     "YES" if included else "NO", "", notes])
     return rows
 
 
@@ -89,7 +93,7 @@ def m22759_rows() -> list[list]:
         for awg, od in spec["od"].items():
             for code, color in COLORS.items():
                 rows.append([f"M22759/{slash}-{awg}-{code}", "wire", f"{spec['desc']}, {awg} AWG, {color}", "", awg, od,
-                             "", "", "", "", "", "", color, f"M22759/{slash}. OD approx. nominal. {VERIFY}"])
+                             "", "", "", "", "", "", "", color, f"M22759/{slash}. OD approx. nominal. {VERIFY}"])
     return rows
 
 

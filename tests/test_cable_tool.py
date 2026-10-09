@@ -48,8 +48,13 @@ def test_bom_quantities():
     bom = {b.pn: b for b in build_bom(design)}
     assert bom["D38999/26WD18SN"].qty == 1 and bom["D38999/26WD18SN"].category == "connector"
     assert bom["D38999/26WD18SN"].description == "CONNECTOR, PLUG, 18 SKT"  # from the parts library
-    assert bom["M39029/56-351"].qty == 12 and bom["M39029/56-351"].category == "contact"  # P1 pins 1-12
-    assert bom["M39029/58-363"].qty == 12  # P2 pins 1-10, 12 and the shield drain on 11
+    # D38999 part numbers without -LC come with their contacts, so the contacts aren't separate BOM lines
+    assert "M39029/56-351" not in bom and "M39029/58-363" not in bom
+    design.connectors[0].connector_pn = "D38999/26WD18SN-LC"
+    design.library.parts["D38999/26WD18SN-LC"] = design.library.get("D38999/26WD18SN")
+    bom = {b.pn: b for b in build_bom(design)}
+    assert bom["M39029/56-351"].qty == 12 and bom["M39029/56-351"].category == "contact"  # P1 pins A-M
+    assert "M39029/58-363" not in bom
     assert bom["M85049/38S15W"].qty == 2 and bom["M85049/38S15W"].used_on == ["P1", "P2"]
     assert bom["TMS-SCE-1/2-2.0-9"].category == "label"
     assert bom["M27500-22TG2T14"].qty == 48 and bom["M27500-22TG2T14"].category == "cable"  # TSP1 by length
@@ -117,7 +122,7 @@ def test_drawing_sheets(size):
     svg2 = sheet_to_svg(sheets[1])
     assert "RS422 TX+" in svg2 and "W3  22 AWG  WHT" in svg2
     tables = "".join(sheet_to_svg(sh) for sh in sheets[2:])
-    for text in ("LABEL SCHEDULE", "WIRE GROUPS AND SHIELDS", "SHIELDED TWISTED PAIR", "P1: BACKSHELL", "P2: PIN 11",
+    for text in ("LABEL SCHEDULE", "WIRE GROUPS AND SHIELDS", "SHIELDED TWISTED PAIR", "P1: BACKSHELL", "P2: PIN L",
                  "SPLICES", "6 IN FROM P2 FACE"):
         assert text in tables
     # Every text item meets the ASME Y14.2 minimum letter height

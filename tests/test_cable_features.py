@@ -98,7 +98,7 @@ def test_groups_in_wire_list_and_tables():
     assert {g.group_id for g in design.groups} == {"TSP1", "TP2"}
     assert [w.wire_id for w in design.group_members("TSP1")] == ["W3", "W4"]
     assert design.splice("SP1").near == "P2"
-    assert design.pins_used("P2")[-3:] == ["10", "11", "12"]   # 11 is the TSP1 shield drain
+    assert design.pins_used("P2")[-3:] == ["K", "L", "M"]   # L is the TSP1 shield drain
 
 
 def load_design_with_groups():
@@ -279,4 +279,4 @@ def test_cli_dxf_drc_and_strict(tmp_path, capsys):
     (tmp_path / "bad.csv").write_text(bad)
     args[args.index(str(SAMPLES / "parts_library.csv"))] = str(tmp_path / "bad.csv")
     assert main(args) == 1
-    assert "error: [Contact wire size] P1-1: Wire W1 is 20 AWG" in capsys.readouterr().err
+    assert "error: [Contact wire size] P1-A: Wire W1 is 20 AWG" in capsys.readouterr().err

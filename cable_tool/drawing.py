@@ -43,6 +43,7 @@ from .asme import (
 )
 from .bom import BomItem, build_bom, compress_refs, item_numbers
 from .canvas import Group, Sheet, fit_text, text_width
+from .inserts import face_view, layout_for
 from .model import (
     SHIELD_BACKSHELL,
     UNIT_NAMES,
@@ -590,6 +591,26 @@ def assembly_view(design: CableDesign, items: dict[str, int], marks: _Marks | No
     return g
 
 
+def face_views(design: CableDesign, max_width: float) -> Group | None:
+    """Mating-face views of the connectors with a known insert layout, in rows no wider than ``max_width``."""
+    views = [v for c in design.connectors
+             if (v := face_view(c.ref, c.connector_pn, set(design.pins_used(c.ref)), T)) is not None]
+    if not views:
+        return None
+    g = Group(layer="FACE_VIEWS")
+    x, y, row_h = 0.0, 0.0, 0.0
+    for v in views:
+        vx0, vy0, vx1, vy1 = v.bounds()
+        w, h = vx1 - vx0, vy1 - vy0
+        if x > 0 and x + w > max_width:
+            x, y, row_h = 0.0, y + row_h + 24, 0.0
+        v.dx, v.dy = x - vx0, y - vy0
+        g.add(v)
+        x += w + 36
+        row_h = max(row_h, h)
+    return g
+
+
 # ---------------------------------------------------------------------------
 # Wiring diagram (ASME Y14.15 style)
 # ---------------------------------------------------------------------------
@@ -847,6 +868,16 @@ def auto_notes(design: CableDesign, bom: list[BomItem], table_sheets: tuple[int,
         tables.append("SPLICES")
     tables.append("LABEL SCHEDULE")
     notes = [Note(f"WIRING DIAGRAM ON SHEET 2. {', '.join(tables[:-1])} AND {tables[-1]} ON {sheets}.")]
+    supplied = [c for c in design.connectors if design.contacts_included(c.ref) and design.pins_used(c.ref)]
+    if supplied:
+        finds = sorted({b.item for b in bom if b.category == "connector" and any(b.pn == c.connector_pn for c in supplied)})
+        contacts = sorted({design.contact_pn(c.ref) for c in supplied if design.contact_pn(c.ref)})
+        label = ("FIND NO. " if len(finds) == 1 else "FIND NOS. ") + ", ".join(map(str, finds))
+        notes.append(Note(f"CONTACTS{' (' + ', '.join(contacts) + ')' if contacts else ''} ARE SUPPLIED WITH CONNECTORS "
+                          f"({label}); DO NOT ORDER SEPARATELY."))
+    if any(layout_for(c.connector_pn) for c in design.connectors):
+        notes.append(Note("CONNECTOR FACE VIEWS SHOW THE MATING FACE PER MIL-STD-1560 (SOCKET INSERTS MIRRORED). "
+                          "FILLED CAVITIES ARE WIRED; UNFILLED CAVITIES ARE UNUSED. MASTER KEYWAY NOT SHOWN."))
     if any(gr.twisted and not gr.cable_pn for gr in active_groups):
         notes.append(Note("TWIST THE WIRES OF EACH TWISTED GROUP TOGETHER OVER THEIR FULL LENGTH (SEE WIRE GROUPS TABLE)."))
     if bundles:
@@ -1095,19 +1126,36 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
     if pl_w > (f1.x1 - f1.x0) * 0.6:
         ok = False
 
-    # Notes at the lower left, above the application/tolerance blocks
-    notes_w_pt = (f1.x1 - pl_w) - f1.x0 - 3 * PAD
+    # Notes at the lower left, above the application/tolerance blocks. Connector face views go to the right of
+    # the notes, next to the parts list; if they'd take too much of that width they're drawn under the assembly.
+    lower_w = (f1.x1 - pl_w) - f1.x0 - 3 * PAD
+    av = assembly_view(design, items, marks)
+    fv = face_views(design, lower_w * 0.45 / S)
+    fv_w = 0.0
+    if fv is not None:
+        fx0, fy0, fx1, fy1 = fv.bounds()
+        if (fx1 - fx0) * S <= lower_w * 0.5 and (fy1 - fy0) * S <= (strip_top - rev_bottom) * 0.5:
+            fv.scale = S
+            fv_w = (fx1 - fx0) * S
+            fv.dx = f1.x1 - pl_w - PAD - fv_w - fx0 * S
+            fv.dy = strip_top - PAD - (fy1 - fy0) * S - fy0 * S
+            s1.root.add(fv)
+        else:
+            ax0, ay0, ax1, ay1 = av.bounds()
+            fv.dx, fv.dy = ax0 - fx0, ay1 + 40 - fy0
+            av.add(fv)
+            fv = None
+    notes_w_pt = lower_w - (fv_w + 2 * PAD if fv_w else 0)
     ng = notes_block(notes, notes_w_pt / S)
     ng.scale = S
     nb = ng.bounds()
     notes_h = (nb[3] - nb[1]) * S
     ng.dx, ng.dy = f1.x0 + PAD, strip_top - PAD - notes_h
     s1.root.add(ng)
-    notes_top = ng.dy
+    notes_top = min(ng.dy, fv.dy + fv.bounds()[1] * S) if fv is not None else ng.dy
 
     # Assembly view: the roomier of (a) left of the revision block, or (b) full width below it
     top = _heading(s1.root, f1.x0 + PAD, f1.y0 + DWG_BLOCK[1] + PAD, "ASSEMBLY VIEW (NOT TO SCALE)")
-    av = assembly_view(design, items, marks)
     bottom = min(notes_top, pl_g.dy) - PAD
     a_box = (f1.x0 + PAD, top, (f1.x1 - REV_W) - f1.x0 - 2 * PAD, bottom - top)
     b_box = (f1.x0 + PAD, rev_bottom + PAD, f1.x1 - f1.x0 - 2 * PAD, bottom - rev_bottom - PAD)

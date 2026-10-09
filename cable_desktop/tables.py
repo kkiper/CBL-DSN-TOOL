@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from cable_tool.edit import rename
-from cable_tool.library import PART_TYPES, Part
+from cable_tool.library import PART_TYPES, Part, parse_bool
 from cable_tool.model import CableDesign, ConnectorEnd, Revision, Splice, Wire, WireGroup
 
 from .document import Document
@@ -39,7 +39,7 @@ GROUP_KINDS = ["TWISTED PAIR", "TWISTED TRIPLE", "SHIELDED", "SHIELDED TWISTED P
 class Col:
     field: str
     header: str
-    kind: str = "text"          # text | float | choice
+    kind: str = "text"          # text | float | choice | bool (YES / NO / blank = rule)
     choices: list[str] = field(default_factory=list)
     tip: str = ""
 
@@ -128,7 +128,10 @@ SPECS: dict[str, TableSpec] = {
          Col("dia_min", "Dia Min (in)", "float", tip="Sealing / clamp range or recovered ID"),
          Col("dia_max", "Dia Max (in)", "float", tip="Sealing / clamp range or expanded ID"),
          Col("cma_min", "CMA Min", "float"), Col("cma_max", "CMA Max", "float"), Col("contact_pn", "Contact P/N"),
-         Col("contacts", "Contacts", "float"), Col("conductors", "Conductors", "float"), Col("wall", "Wall (in)", "float"),
+         Col("contacts", "Contacts", "float"),
+         Col("contacts_included", "Contacts Incl.", "bool", ["", "YES", "NO"],
+             tip="Connector supplied with its contacts. Blank: D38999 P/Ns include them unless they end in -LC"),
+         Col("conductors", "Conductors", "float"), Col("wall", "Wall (in)", "float"),
          Col("color", "Color"), Col("notes", "Notes")],
         lambda d: list(d.library.parts.values()),
         lambda d: Part(next_id(list(d.library.parts), "NEW-PART-")),
@@ -195,6 +198,8 @@ class RecordModel(QAbstractTableModel):
         if role in (Qt.DisplayRole, Qt.EditRole):
             if value is None:
                 return ""
+            if isinstance(value, bool):
+                return "YES" if value else "NO"
             if isinstance(value, float):
                 return f"{value:g}"
             return str(value)
@@ -218,6 +223,8 @@ class RecordModel(QAbstractTableModel):
                     new = float(text)
                 except ValueError:
                     return False
+        elif col.kind == "bool":
+            new = parse_bool(text)
         else:
             new = text
         row = index.row()
@@ -277,7 +284,7 @@ class RecordTable(QWidget):
         self.view.horizontalHeader().setStretchLastSection(True)
         self.view.verticalHeader().setDefaultSectionSize(22)
         for i, col in enumerate(self.spec.columns):
-            if col.kind == "choice":
+            if col.kind in ("choice", "bool"):
                 self.view.setItemDelegateForColumn(i, _ChoiceDelegate(col.choices, self.view))
         add, delete = QToolButton(text="+ Add"), QToolButton(text="− Delete")
         add.clicked.connect(self.add_row)

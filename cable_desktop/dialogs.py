@@ -31,7 +31,7 @@ from cable_tool.canvas import sheet_to_svg, sheets_to_pdf
 from cable_tool.drawing import build_drawing
 from cable_tool.drc import run_drc
 from cable_tool.dxf import sheet_to_dxf
-from cable_tool.library import PART_TYPES, Part
+from cable_tool.library import PART_TYPES, Part, parse_bool
 from cable_tool.model import TitleBlock
 from cable_tool.project import save_design
 
@@ -208,7 +208,7 @@ def export_package(doc: Document, folder: Path, stem: str, formats: set[str]) ->
 TYPE_FIELDS = {
     "wire": ["awg", "od", "color"],
     "cable": ["awg", "od", "conductors"],
-    "connector": ["contact_pn", "contacts", "awg_min", "awg_max", "dia_min", "dia_max"],
+    "connector": ["contact_pn", "contacts", "contacts_included", "awg_min", "awg_max", "dia_min", "dia_max"],
     "contact": ["awg_min", "awg_max", "dia_min", "dia_max"],
     "backshell": ["dia_min", "dia_max"],
     "heatshrink": ["dia_min", "dia_max"],
@@ -221,7 +221,7 @@ TYPE_FIELDS = {
 }
 FIELD_HELP = {
     "awg": "AWG", "od": "OD (in)", "color": "Color", "conductors": "Conductors", "contact_pn": "Default contact P/N",
-    "contacts": "Contact count", "awg_min": "AWG min (largest wire)", "awg_max": "AWG max (smallest wire)",
+    "contacts": "Contact count", "contacts_included": "Contacts included (YES / NO / blank = P/N rule)", "awg_min": "AWG min (largest wire)", "awg_max": "AWG max (smallest wire)",
     "dia_min": "Dia min (in)", "dia_max": "Dia max (in)", "cma_min": "CMA min", "cma_max": "CMA max",
     "wall": "Wall (in)",
 }
@@ -288,6 +288,8 @@ class NewPartDialog(QDialog):
                 continue
             if f in ("color", "contact_pn"):
                 setattr(p, f, text)
+            elif f == "contacts_included":
+                p.contacts_included = parse_bool(text)
             else:
                 try:
                     setattr(p, f, float(text))
