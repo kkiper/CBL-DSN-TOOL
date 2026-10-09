@@ -35,6 +35,26 @@ python -m cable_desktop                # or: python -m cable_desktop project.cbl
   cable part onto a wire.
 - **Group wires:** select wires, right-click, *Group as* twisted pair, shielded twisted pair, shielded, or jacketed
   cable. Set the shield terminations in the *Groups and shields* table.
+- **Shields:**
+  - *Add shield over N selected wire(s)* puts a shield over the selection. A pair or cable that is partly
+    selected goes in whole and keeps its own group inside the shield. A selection inside an existing shield
+    gets a shield of its own inside that one.
+  - *Add overall shield over the entire bundle* puts one shield over every wire, with the existing pairs, cables
+    and shields nested inside it. The *Within* column of the groups table shows the nesting.
+  - Shields are drawn as dashed ovals around their wires next to each connector. When the shielded wires aren't
+    neighbours, each run of neighbouring wires gets its own oval, and a dashed tie line joins the ovals to show
+    they're one shield. The wiring diagram on the drawing uses the same convention.
+- **Shield terminations:** right-click a shield and choose *Terminate at P1*:
+  - **Shell** goes to the connector's backshell, or to the connector shell if there's no backshell;
+  - **Float** insulates the shield end;
+  - **Pin** lands the drain on a contact.
+
+  *Remove shield* takes the shield away and moves whatever was inside it up a level.
+- **SHELL connection:** right-click a connector and choose *Show Shell connection* to add a SHELL port under its
+  pins. It's switched on automatically when a shield is terminated to the shell, and wires can't connect to it.
+- **Pin order:** right-click a pin row and choose *Move pin up / down* to reorder the rows.
+  *Arrange pins: keep each shield's wires together* puts each shield's, pair's and cable's pins next to each
+  other, so they draw as one oval. The wiring diagram tables use the same order.
 - **Splices:** *+ Splice* or drop a splice part, then wire to it. Set *Near* / *Distance* in the *Splices* table to
   locate it.
 - **Tables** at the bottom show the same data as a spreadsheet. **Properties** (right) edits the selected item.

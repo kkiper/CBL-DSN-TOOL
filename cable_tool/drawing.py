@@ -685,6 +685,27 @@ def _ground_symbol(g: Group, x: float, y: float, d: int) -> None:
         g.line(xx, y - h / 2, xx, y + h / 2, width=THICK)
 
 
+NEST_STEP = 22.0       # extra offset per nesting level, so a shield's oval sits outside the ovals of the groups in it
+TIE_STEP = 7.0         # spacing of the tie lanes that join the ovals of one shield over non-adjacent wires
+
+
+def _member_runs(pins: set[str], ref: str, row_index: dict, row_y: dict, inside=lambda row: False) -> list[list[float]]:
+    """Row centres of a group's pins at one connector, split into runs of neighbouring rows. A row that carries some
+    other wire (or another group's shield drain) between two members splits the run; empty (NC) rows and rows
+    ``inside`` the group (e.g. the drain of a pair under this shield) don't."""
+    idx = sorted(row_index[(ref, p)][0] for p in pins)
+    rows = row_index[(ref, next(iter(pins)))][1]
+    runs: list[list[float]] = []
+    prev = None
+    for i in idx:
+        between = rows[prev + 1:i] if prev is not None else []
+        if prev is None or any((r.wire is not None or r.shield_of) and not inside(r) for r in between):
+            runs.append([])
+        runs[-1].append(row_y[(ref, rows[i].pin)])
+        prev = i
+    return runs
+
+
 def wiring_diagram(design: CableDesign) -> Group:
     g = Group(layer="WIRING")
     shields = Group(layer="SHIELDS")
@@ -701,19 +722,25 @@ def wiring_diagram(design: CableDesign) -> Group:
         for gr, pin in design.shield_pins(c.ref):
             if not any(r.pin == pin for r in rows[c.ref]):
                 rows[c.ref].append(_Row(pin, f"{gr.group_id} SHIELD", None, 0, gr.group_id))
-    for lst in rows.values():
-        lst.sort(key=lambda r: (natural_key(r.pin), natural_key(r.wire.wire_id if r.wire else "")))
+    # rows in the connector's pin order (set on the canvas), else natural order
+    for ref, lst in rows.items():
+        key = design.pin_sort_key(ref)
+        lst.sort(key=lambda r: (key(r.pin), natural_key(r.wire.wire_id if r.wire else "")))
     # Unused contact positions: one NC row each, or a single summary row when there are many
     for c in design.connectors:
         nc = design.unused_pins(c.ref)
         if 0 < len(nc) <= NC_ROWS_MAX:
-            rows[c.ref] = sorted(rows[c.ref] + [_Row(p, NC) for p in nc], key=lambda r: natural_key(r.pin))
+            key = design.pin_sort_key(c.ref)
+            rows[c.ref] = sorted(rows[c.ref] + [_Row(p, NC) for p in nc], key=lambda r: key(r.pin))
         elif nc:
             rows[c.ref].append(_Row(NC, f"{len(nc)} POSITIONS, SEE NOTES"))
 
     size, row_h = T, 14.0
     tag_end = max([60.0] + [text_width(wire_tag(w), T) + 10 for w in design.wires])
-    stub = max(90.0, tag_end + (44 if has_groups else 8))
+    max_level = max([design.group_level(gr.group_id) for gr in design.groups if design.group_members(gr.group_id)],
+                    default=0)
+    n_tie = min(sum(1 for gr in design.groups if len(design.group_members(gr.group_id)) > 1), 6)
+    stub = max(90.0, tag_end + (44 + NEST_STEP * max_level + TIE_STEP * n_tie if has_groups else 8))
     oval_off = tag_end + 13
 
     def table_dims(c: ConnectorEnd):
@@ -733,6 +760,7 @@ def wiring_diagram(design: CableDesign) -> Group:
 
     anchor: dict[tuple[int, int], tuple[float, float]] = {}
     row_y: dict[tuple[str, str], float] = {}
+    row_index: dict[tuple[str, str], tuple[int, list]] = {}
     edges: dict[str, tuple[float, int]] = {}
     for side, d in ((left, 1), (right, -1)):
         y = 0.0
@@ -763,6 +791,7 @@ def wiring_diagram(design: CableDesign) -> Group:
             edges[c.ref] = (edge, d)
             for r, row in enumerate(rs):
                 ry = y + r * row_h
+                row_index[(c.ref, row.pin)] = (r, rs)
                 if r:
                     g.line(x, ry, x + tw, ry, width=THIN)
                 g.text(pin_x + pin_w / 2, ry + 10, row.pin, size=size, bold=True, anchor="middle")
@@ -822,33 +851,62 @@ def wiring_diagram(design: CableDesign) -> Group:
         if sp.splice_pn:
             g.text(x, y + 14, sp.splice_pn, size=T, anchor="middle")
 
+    tied = False
+    tie_lanes: dict[str, int] = {}
     for gr in design.groups:
         members = design.group_members(gr.group_id)
         if not members:
             continue
         shielded = gr.shielded or "SHIELD" in gr.kind.upper()
+        level = design.group_level(gr.group_id)
         for ref, (edge, d) in edges.items():
-            ys = sorted(row_y[(ref, p)] for w in members for r, p in ((w.from_ref, w.from_pin), (w.to_ref, w.to_pin))
-                        if r == ref and (ref, p) in row_y)
-            if not ys:
+            pins = {p for w in members for r, p in ((w.from_ref, w.from_pin), (w.to_ref, w.to_pin))
+                    if r == ref and (ref, p) in row_y}
+            if not pins:
                 continue
-            ox = edge + d * oval_off
-            top, bot = ys[0], ys[-1]
-            cy, ry = (top + bot) / 2, (bot - top) / 2 + 5.5
-            if gr.twisted and len(ys) >= 2:
-                for y1, y2 in zip(ys, ys[1:]):
-                    shields.line(ox - 4, y1, ox + 4, y2, width=THIN)
-                    shields.line(ox - 4, y2, ox + 4, y1, width=THIN)
-            if shielded or gr.jacketed:
-                shields.ellipse(ox, cy, 7, ry, width=THIN, dash=(2.5, 1.5) if shielded else None)
-            shields.text(ox + d * 9, top - 2.5, gr.group_id, size=T, bold=True, anchor="start" if d == 1 else "end")
+            ox = edge + d * (oval_off + NEST_STEP * level)
+            rx = 7.0 + 2.0 * level
+            gid = gr.group_id
+            runs = _member_runs(pins, ref, row_index, row_y,
+                                lambda row, gid=gid: bool(row.shield_of) and gid in design.group_chain(row.shield_of))
+            centers = []
+            for ys in runs:
+                top, bot = ys[0], ys[-1]
+                cy, ry = (top + bot) / 2, (bot - top) / 2 + 5.5 + 1.5 * level
+                centers.append(cy)
+                if gr.twisted and len(ys) >= 2:
+                    for y1, y2 in zip(ys, ys[1:]):
+                        shields.line(ox - 4, y1, ox + 4, y2, width=THIN)
+                        shields.line(ox - 4, y2, ox + 4, y1, width=THIN)
+                if shielded or gr.jacketed:
+                    shields.ellipse(ox, cy, rx, ry, width=THIN, dash=(2.5, 1.5) if shielded else None)
+            # members that aren't neighbours: one oval per run, joined by a tie line in a lane of its own outside
+            # every oval (the same shield or cable)
+            lead_x = ox + d * rx
+            if len(runs) > 1:
+                tied = True
+                lane = tie_lanes.get(ref, 0)
+                tie_lanes[ref] = lane + 1
+                tie_x = edge + d * (oval_off + NEST_STEP * max_level + 14 + TIE_STEP * lane)
+                for cy in centers:
+                    shields.line(ox + d * rx, cy, tie_x, cy, width=THIN, dash=(2.5, 1.5))
+                    shields.circle(tie_x, cy, 1.2, fill="#000000", width=THIN)
+                shields.line(tie_x, centers[0], tie_x, centers[-1], width=THIN, dash=(2.5, 1.5))
+                lead_x = tie_x
+            if level:       # a shield over other groups: label above its oval, clear of the inner labels
+                shields.text(ox, runs[0][0] - 7.5 - 1.5 * level, gr.group_id, size=T, bold=True, anchor="middle")
+            else:
+                shields.text(ox + d * (rx + 2), runs[0][0] - 2.5, gr.group_id, size=T, bold=True,
+                             anchor="start" if d == 1 else "end")
             if not shielded:
                 continue
+            cy = centers[0]
             kind, pin = parse_shield_term(design.shield_term_at(gr, ref), ref)
-            lead_x = ox + d * 7
             if kind == SHIELD_BACKSHELL:
                 shields.line(lead_x, cy, lead_x + d * 7, cy, width=THIN, dash=(2, 1.5))
                 _ground_symbol(shields, lead_x + d * 7, cy, d)
+                if design.shell_name(ref) == "CONNECTOR SHELL":
+                    shields.text(lead_x + d * 18, cy + 2.5, "SHELL", size=T, anchor="start" if d == 1 else "end")
             elif kind == "PIN" and (ref, pin) in row_y:
                 py = row_y[(ref, pin)]
                 jx = lead_x + d * 7
@@ -873,8 +931,14 @@ def wiring_diagram(design: CableDesign) -> Group:
         lg.text(x + 9, 0, "JACKETED CABLE", size=T)
         x += 9 + text_width("JACKETED CABLE", T) + 14
         _ground_symbol(lg, x, -3, 1)
-        lg.text(x + 10, 0, "SHIELD TO BACKSHELL", size=T)
-        x += 10 + text_width("SHIELD TO BACKSHELL", T) + 14
+        lg.text(x + 10, 0, "SHIELD TO BACKSHELL / SHELL", size=T)
+        x += 10 + text_width("SHIELD TO BACKSHELL / SHELL", T) + 14
+        if tied:
+            lg.ellipse(x, -9, 4, 4, width=THIN, dash=(2.5, 1.5))
+            lg.ellipse(x, 3, 4, 4, width=THIN, dash=(2.5, 1.5))
+            lg.line(x + 7, -9, x + 7, 3, width=THIN, dash=(2.5, 1.5))
+            lg.text(x + 12, 0, "TIED = ONE SHIELD OVER NON-ADJACENT WIRES", size=T)
+            x += 12 + text_width("TIED = ONE SHIELD OVER NON-ADJACENT WIRES", T) + 14
         lg.text(x, 0, "? = SHIELD TERMINATION NOT SPECIFIED", size=T)
         lg.dx, lg.dy = 0.0, g.bounds()[3] + 18
         g.add(lg)
@@ -1026,22 +1090,28 @@ def _term_text(design: CableDesign, gr, ref: str) -> str:
         return ""
     if kind == "PIN":
         return f"{ref}: PIN {pin}"
+    if kind == SHIELD_BACKSHELL:
+        return f"{ref}: {design.shell_name(ref)}"
     return f"{ref}: {kind or 'TBD'}"
 
 
 def group_rows(design: CableDesign, items: dict[str, int]) -> tuple[list[str], list[list[str]]]:
-    headers = ["GROUP", "TYPE", "WIRES", "CABLE P/N", "SHIELD P/N", "SHIELD TERM", "SHIELD (FROM END)",
+    headers = ["GROUP", "TYPE", "WITHIN", "WIRES", "CABLE P/N", "SHIELD P/N", "SHIELD TERM", "SHIELD (FROM END)",
                "SHIELD (TO END)", "NOTES"]
     rows = []
     for gr in design.groups:
         members = design.group_members(gr.group_id)
         if not members:
             continue
-        a, b = design.group_ends(gr.group_id)
+        refs = design.group_refs(gr.group_id)
+        a = refs[0]
         term = gr.shield_term_pn + (f" (FIND NO. {items[gr.shield_term_pn]})" if gr.shield_term_pn in items else "")
-        rows.append([gr.group_id, gr.kind.upper(), compress_refs([w.wire_id for w in members], 40), gr.cable_pn,
-                     gr.shield_pn, term, _term_text(design, gr, a), _term_text(design, gr, b) if b != a else "",
-                     gr.notes])
+        kids = [k.group_id for k in design.group_children(gr.group_id) if design.group_members(k.group_id)]
+        wires = compress_refs([w.wire_id for w in design.direct_members(gr.group_id)], 40)
+        contents = ", ".join(x for x in (", ".join(kids), wires) if x)
+        far = "; ".join(t for t in (_term_text(design, gr, r) for r in refs[1:]) if t)
+        rows.append([gr.group_id, gr.kind.upper(), gr.parent if design.group(gr.parent) else "", contents,
+                     gr.cable_pn, gr.shield_pn, term, _term_text(design, gr, a), far, gr.notes])
     return headers, rows
 
 
@@ -1131,7 +1201,8 @@ def _build(design: CableDesign, sheet_size: str, force: bool) -> tuple[list[Shee
     col_top, col_x, col_right = y, 0.0, 0.0
     table_specs = [
         ("WIRE LIST", wire_list_rows(design), [44, 34, 26, 34, 26, 110, 26, 40, 96, 34, 48, 110], frozenset({2, 4, 6, 10})),
-        ("WIRE GROUPS AND SHIELDS", group_rows(design, items), [40, 110, 70, 96, 80, 120, 80, 80, 120], frozenset()),
+        ("WIRE GROUPS AND SHIELDS", group_rows(design, items), [40, 110, 40, 96, 96, 80, 120, 96, 120, 120],
+         frozenset({2})),
         ("SPLICES", splice_rows(design, items), [40, 36, 90, 130, 120, 120], frozenset({1})),
         ("LABEL SCHEDULE", label_schedule_rows(design, items), [36, 96, 60, 190, 26], frozenset({0, 4})),
     ]

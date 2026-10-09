@@ -74,12 +74,12 @@ def build_bom(design: CableDesign) -> list[BomItem]:
             add(g.cable_pn, "cable", length, design.units, g.group_id)
             cabled.add(g.group_id)
         add(g.shield_pn, "shield", length, design.units, g.group_id)
-        for ref in dict.fromkeys(design.group_ends(g.group_id)):
+        for ref in design.group_refs(g.group_id):
             kind, _ = parse_shield_term(design.shield_term_at(g, ref), ref)
             if kind in (SHIELD_BACKSHELL, "PIN"):
                 add(g.shield_term_pn, "shield_term", 1, "EA", f"{g.group_id}@{ref}")
     for w in design.wires:
-        if w.group in cabled:
+        if cabled & set(design.group_chain(w.group)):
             continue   # conductor of a cable already counted by length
         hint = " ".join(x for x in (f"{w.gauge} AWG" if w.gauge else "", w.color) if x)
         add(w.wire_pn, "wire", design.wire_length(w), design.units, w.wire_id, hint)

@@ -180,21 +180,28 @@ class _Checker:
         od = typical_od(self.wire_awg(w))
         return od, od is not None
 
-    def group_od(self, g: WireGroup) -> tuple[float | None, int, int]:
+    def group_od(self, g: WireGroup, _seen: frozenset = frozenset()) -> tuple[float | None, int, int]:
         """(OD, estimated count, unknown count) of a cable or built-up shielded group."""
-        members = self.d.group_members(g.group_id)
         if g.cable_pn:
             p = self.lib.get(g.cable_pn)
             if p and p.od:
                 return p.od, 0, 0
         ods, est, unk = [], 0, 0
-        for w in members:
+        # direct wires, plus each nested group once at its own OD (a shield over cables lies over the cables)
+        for w in self.d.direct_members(g.group_id):
             od, e = self.wire_od(w)
             if od is None:
                 unk += 1
             else:
                 ods.append(od)
                 est += e
+        for k in self.d.group_children(g.group_id):
+            if not self.d.group_members(k.group_id) or k.group_id in _seen:
+                continue
+            od, e, u = self.group_od(k, _seen | {g.group_id})
+            est, unk = est + e, unk + u
+            if od is not None:
+                ods.append(od)
         core = bundle_diameter(ods)
         if core is None:
             return None, est, unk
@@ -292,7 +299,7 @@ class _Checker:
             for g, pin in self.d.shield_pins(c.ref):
                 wires_on_pin = [w for w in self.d.wires
                                 if (w.from_ref, w.from_pin) == (c.ref, pin) or (w.to_ref, w.to_pin) == (c.ref, pin)]
-                others = [w.wire_id for w in wires_on_pin if w.group != g.group_id]
+                others = [w.wire_id for w in wires_on_pin if g.group_id not in self.d.group_chain(w.group)]
                 if others:
                     self.r.add(WARNING, "Shield termination", f"{c.ref}-{pin}",
                                f"Shield of {g.group_id} lands on {c.ref}-{pin}, which also carries {', '.join(others)}.")
@@ -326,6 +333,10 @@ class _Checker:
 
     def groups(self) -> None:
         for g in self.d.groups:
+            if g.parent and self.d.group(g.parent) is None:
+                self.r.add(WARNING, "Groups", g.group_id, f"'Within' names group {g.parent}, which doesn't exist.")
+            elif g.parent and g.group_id in self.d.group_chain(g.parent):
+                self.r.add(ERROR, "Groups", g.group_id, f"Groups {g.group_id} and {g.parent} are inside each other.")
             members = self.d.group_members(g.group_id)
             if not members:
                 self.r.add(WARNING, "Groups", g.group_id, "No wires are assigned to this group.")
@@ -334,8 +345,9 @@ class _Checker:
             expect = 2 if "PAIR" in kind else 3 if "TRIPLE" in kind else 4 if "QUAD" in kind else None
             if expect and len(members) != expect:
                 self.r.add(WARNING, "Groups", g.group_id, f"{g.kind.title()} has {len(members)} wires ({', '.join(w.wire_id for w in members)}).")
-            ends = {frozenset((w.from_ref, w.to_ref)) for w in members}
-            if len(ends) > 1:
+            # a splice inside the group doesn't break it; the wires must still all run between the same two ends
+            ends = {r for w in members for r in (w.from_ref, w.to_ref) if r and not self.d.is_splice(r)}
+            if len(ends) > 2:
                 self.r.add(WARNING, "Groups", g.group_id,
                            "Wires in this group don't all run between the same two connectors/splices; the twist or shield can't stay intact.")
             if g.cable_pn:
@@ -358,7 +370,7 @@ class _Checker:
                 continue
             term_part = self.part(g.shield_term_pn, "shield termination", g.group_id)
             od, _, _ = self.group_od(g)
-            for ref in dict.fromkeys(self.d.group_ends(g.group_id)):
+            for ref in self.d.group_refs(g.group_id):
                 if self.d.is_splice(ref):
                     continue
                 kind_at, pin = parse_shield_term(self.d.shield_term_at(g, ref), ref)
@@ -372,7 +384,7 @@ class _Checker:
                     self.fit("Shield termination", f"{g.group_id}@{ref}", "Shielded group OD", g.shield_term_pn, od,
                              term_part, "the termination won't fit over the shield.",
                              "the termination is too large to make a good shield connection.")
-            kinds = [parse_shield_term(self.d.shield_term_at(g, r), r)[0] for r in dict.fromkeys(self.d.group_ends(g.group_id))]
+            kinds = [parse_shield_term(self.d.shield_term_at(g, r), r)[0] for r in self.d.group_refs(g.group_id)]
             if kinds and all(k == SHIELD_FLOAT for k in kinds):
                 self.r.add(WARNING, "Shield termination", g.group_id, "Shield floats at both ends, so it gives no shielding.")
 
@@ -383,8 +395,10 @@ class _Checker:
         for w in self.d.wires:
             if ref not in (w.from_ref, w.to_ref):
                 continue
-            g = self.d.group(w.group) if w.group else None
-            if g and (g.cable_pn or g.shielded):
+            # count the outermost cable or shield the wire runs in, once
+            g = next((self.d.group(gid) for gid in reversed(self.d.group_chain(w.group))
+                      if self.d.group(gid) and (self.d.group(gid).cable_pn or self.d.group(gid).shielded)), None)
+            if g:
                 if g.group_id in seen_groups:
                     continue
                 seen_groups.add(g.group_id)

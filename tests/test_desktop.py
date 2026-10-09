@@ -242,3 +242,30 @@ def test_calculators_tab(win, tmp_path):
     b.export_csv(str(out))
     text = out.read_text()
     assert "Bundle diameter (in),0.257" in text and "M27500-22TG2T14" in text
+
+
+def test_canvas_shell_shields_and_pin_order(win):
+    cv = win.canvas
+    d = lambda: win.doc.design  # noqa: E731
+    cv.set_show_shell("P2", True)
+    p2 = cv.scene.connectors["P2"]
+    assert p2.shell and p2.rows()[-1] == "SHELL" and p2.pin_at(p2.port_pos("SHELL")) == "SHELL"
+    cv.set_show_shell("P2", False)
+    assert not cv.scene.connectors["P2"].shell
+    s1 = cv.shield_wires(["W1", "W7"])                        # P1-A and P1-G: not neighbours
+    assert s1 in cv.scene.shields and d().group(s1).shielded
+    cv.terminate_shield(s1, "P1", "SHELL")
+    assert cv.scene.connectors["P1"].shell and cv.scene.connectors["P1"].shell_used
+    overall = cv.shield_wires([w.wire_id for w in d().wires])
+    assert d().group(s1).parent == overall and d().group("TSP1").parent == overall
+    p1 = cv.scene.connectors["P1"]
+    assert p1.pins.index("G") - p1.pins.index("A") > 1
+    cv.arrange_pins("P1")
+    p1 = cv.scene.connectors["P1"]
+    assert p1.pins[:2] == ["A", "G"] and d().connector("P1").pin_order[:2] == ["A", "G"]
+    cv.move_pin("P1", "G", 1)
+    assert cv.scene.connectors["P1"].pins[:3] == ["A", "B", "G"]
+    win.doc.undo_stack.undo()
+    assert cv.scene.connectors["P1"].pins[:2] == ["A", "G"]
+    cv.remove_shield(s1)
+    assert d().group(s1) is None and s1 not in cv.scene.shields

@@ -4,7 +4,11 @@
 * Drag from a pin (or splice) to another pin (or splice) to add a wire, using the "New wire" defaults.
 * Drag parts from the library: a connector or splice part onto empty canvas adds one; a backshell, boot,
   label or contact onto a connector assigns it; a wire or cable part onto a wire assigns it.
-* Select wires and right-click to group them (twisted pair, shielded...). Delete removes the selection.
+* Select wires and right-click to group them (twisted pair, shielded...), to put a shield over them, or to put an
+  overall shield over the whole bundle. Shields are drawn as dashed ovals around their wires next to each
+  connector; wires that aren't neighbours get one oval per run, joined by a dashed tie line (one shield).
+* Right-click a connector to show its SHELL connection; right-click a shield to terminate it at each end
+  (SHELL, a pin, or floating) or remove it. Delete removes the selection.
 * Items with DRC errors are outlined red, warnings amber.
 """
 
@@ -31,8 +35,19 @@ from PySide6.QtWidgets import (
 
 from cable_tool.drawing import assign_sides
 from cable_tool.drc import ERROR, WARNING
+from cable_tool.edit import add_shield, remove_group, set_shield_term
 from cable_tool.inserts import layout_for
-from cable_tool.model import CableDesign, ConnectorEnd, Splice, Wire, WireGroup, natural_key
+from cable_tool.model import (
+    SHIELD_BACKSHELL,
+    SHIELD_FLOAT,
+    CableDesign,
+    ConnectorEnd,
+    Splice,
+    Wire,
+    WireGroup,
+    natural_key,
+    parse_shield_term,
+)
 
 from .document import Document
 from .tables import GROUP_KINDS, next_id
@@ -46,6 +61,8 @@ WIRE_COLORS = {
     "GRY": "#7f7f7f", "GRAY": "#7f7f7f", "PNK": "#e377c2", "PINK": "#e377c2",
 }
 SEVERITY_PEN = {ERROR: QColor("#d9534f"), WARNING: QColor("#e0a800")}
+SHELL = "SHELL"                 # the connector shell / backshell connection (shield terminations only)
+SHIELD_COLOR = QColor("#6a4c93")
 FONT = QFont("Sans Serif", 9)
 BOLD = QFont("Sans Serif", 10, QFont.Bold)
 
@@ -55,7 +72,17 @@ def wire_color(w: Wire) -> QColor:
 
 
 def connector_pins(design: CableDesign, c: ConnectorEnd) -> list[str]:
-    """Pins shown on the canvas: the connector's contact positions (from the library) plus any used pins."""
+    """Pins shown on the canvas, in the connector's row order (set by moving pins) where one is set."""
+    pins = _default_pins(design, c)
+    if c.pin_order:
+        order = {p: i for i, p in enumerate(c.pin_order)}
+        default = {p: i for i, p in enumerate(pins)}
+        pins = sorted(pins, key=lambda p: (0, order[p]) if p in order else (1, default[p]))
+    return pins
+
+
+def _default_pins(design: CableDesign, c: ConnectorEnd) -> list[str]:
+    """The connector's contact positions (from the insert layout or library) plus any used pins."""
     used = design.pins_used(c.ref)
     found = layout_for(c.connector_pn)
     if found:   # known insert arrangement: its contact labels, in catalogue order, then any stray pins
@@ -95,6 +122,8 @@ class ConnectorItem(QGraphicsObject):
         for g, p in design.shield_pins(c.ref):
             self.signals.setdefault(p, f"{g.group_id} SHIELD")
         self.used = set(design.pins_used(c.ref))
+        self.shell = design.shell_shown(c.ref)
+        self.shell_used = bool(design.shell_terminations(c.ref))
         self.severity: str | None = None
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable |
                       QGraphicsItem.ItemSendsGeometryChanges)
@@ -102,25 +131,30 @@ class ConnectorItem(QGraphicsObject):
         self.setZValue(2)
         self.drop_hint = False
 
+    def rows(self) -> list[str]:
+        """Port rows top to bottom: the pins, then SHELL when shown."""
+        return self.pins + ([SHELL] if self.shell else [])
+
     def boundingRect(self):
-        return QRectF(-PORT_R - 2, -2, CONN_W + 2 * PORT_R + 4, HEAD_H + ROW_H * max(len(self.pins), 1) + 4)
+        return QRectF(-PORT_R - 2, -2, CONN_W + 2 * PORT_R + 4, HEAD_H + ROW_H * max(len(self.rows()), 1) + 4)
 
     def port_pos(self, pin: str) -> QPointF:
-        i = self.pins.index(pin) if pin in self.pins else 0
+        rows = self.rows()
+        i = rows.index(pin) if pin in rows else 0
         x = CONN_W if self.side == 1 else 0.0
         return self.mapToScene(QPointF(x, HEAD_H + (i + 0.5) * ROW_H))
 
     def pin_at(self, scene_pos: QPointF, tolerance: float = 9.0) -> str | None:
         p = self.mapFromScene(scene_pos)
         x = CONN_W if self.side == 1 else 0.0
-        for i, pin in enumerate(self.pins):
+        for i, pin in enumerate(self.rows()):
             y = HEAD_H + (i + 0.5) * ROW_H
             if abs(p.x() - x) <= tolerance and abs(p.y() - y) <= ROW_H / 2:
                 return pin
         return None
 
     def paint(self, p: QPainter, option, widget=None):
-        h = HEAD_H + ROW_H * max(len(self.pins), 1)
+        h = HEAD_H + ROW_H * max(len(self.rows()), 1)
         border = QColor("#2b6cb0") if self.isSelected() else SEVERITY_PEN.get(self.severity, QColor("#3a3f44"))
         p.setPen(QPen(border, 2.2 if self.isSelected() or self.severity else 1.2))
         p.setBrush(QColor("#eaf2fb") if self.drop_hint else QColor("#ffffff"))
@@ -151,6 +185,23 @@ class ConnectorItem(QGraphicsObject):
             p.setPen(QPen(QColor("#3a3f44"), 1.2))
             p.setBrush(QColor("#2b6cb0") if used else QColor("#ffffff"))
             p.drawEllipse(QPointF(x, y + ROW_H / 2), PORT_R, PORT_R)
+        if self.shell:
+            y = HEAD_H + len(self.pins) * ROW_H
+            p.fillRect(QRectF(1, y, CONN_W - 2, ROW_H - 1), QColor("#efe9f6"))
+            p.setPen(QPen(QColor("#d5dbe1"), 1))
+            p.drawLine(QPointF(0, y), QPointF(CONN_W, y))
+            p.setPen(SHIELD_COLOR)
+            p.setFont(BOLD if self.shell_used else FONT)
+            text_rect = QRectF(8, y, CONN_W - 50, ROW_H) if self.side == 1 else QRectF(42, y, CONN_W - 50, ROW_H)
+            p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, "SHELL")
+            x = CONN_W if self.side == 1 else 0
+            gx = x - self.side * 22
+            for k, half in enumerate((6, 4, 2)):        # ground symbol
+                p.drawLine(QPointF(gx + self.side * k * 3, y + ROW_H / 2 - half),
+                           QPointF(gx + self.side * k * 3, y + ROW_H / 2 + half))
+            p.setPen(QPen(SHIELD_COLOR, 1.2))
+            p.setBrush(SHIELD_COLOR if self.shell_used else QColor("#ffffff"))
+            p.drawRect(QRectF(x - PORT_R, y + ROW_H / 2 - PORT_R, 2 * PORT_R, 2 * PORT_R))
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene():
@@ -235,9 +286,7 @@ class WireItem(QGraphicsPathItem):
         if self.severity:
             col = SEVERITY_PEN[self.severity]
         pen = QPen(col, width)
-        if self.group and self.group.shielded:
-            pen.setStyle(Qt.DashLine)
-        elif self.group and self.group.twisted:
+        if self.group and self.group.twisted:       # shields are drawn as ovals (ShieldItem)
             pen.setStyle(Qt.DashDotLine)
         pen.setCapStyle(Qt.RoundCap)
         self.setPen(pen)
@@ -255,6 +304,131 @@ class WireItem(QGraphicsPathItem):
         return s.createStroke(self.path())
 
 
+class ShieldItem(QGraphicsPathItem):
+    """A shield (or overall shield) drawn next to each connector it reaches: a dashed oval around each run of
+    neighbouring member wires, a tie line joining the ovals when the members aren't neighbours, and a lead to
+    its termination (SHELL port, a pin) or a short insulated end when it floats."""
+
+    def __init__(self, group: WireGroup, level: int):
+        super().__init__()
+        self.group, self.level = group, level
+        self.gid = group.group_id
+        self.setFlags(QGraphicsItem.ItemIsSelectable)
+        self.setZValue(1.5)
+        self.labels: list = []
+        self.setToolTip(f"{self.gid}: {group.kind.title()}  (right-click to terminate or remove)")
+
+    def layout(self, scene: "HarnessScene"):
+        d = scene.doc.design
+        members = {w.wire_id for w in d.group_members(self.gid)}
+        path = QPainterPath()
+        for lab in self.labels:
+            scene.removeItem(lab)
+        self.labels = []
+        pad = 7.0 + 5.0 * self.level
+        for ref in d.group_refs(self.gid):
+            conn = scene.connectors.get(ref)
+            if conn is None:
+                continue
+            # where each member wire leaves this connector, a little way out from the port
+            pts: dict[str, QPointF] = {}
+            for item in scene.wires:
+                w = item.wire
+                if w.wire_id not in members or not item.isVisible():
+                    continue
+                for end, (r, pin) in enumerate(((w.from_ref, w.from_pin), (w.to_ref, w.to_pin))):
+                    if r == ref:
+                        t = 0.1 if end == 0 else 0.9
+                        pts.setdefault(pin, item.path().pointAtPercent(t))
+            if not pts:
+                continue
+            runs = self._runs(conn, pts, d, members)
+            rects = []
+            for run in runs:
+                xs = [pts[p].x() for p in run]
+                ys = [pts[p].y() for p in run]
+                rect = QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs) + 2 * pad, max(ys) - min(ys) + 2 * pad)
+                path.addEllipse(rect)
+                rects.append(rect)
+            out = conn.side
+            edge = (max(r.right() for r in rects) if out == 1 else min(r.left() for r in rects))
+            lead = QPointF(edge, rects[0].center().y())
+            if len(rects) > 1:          # one shield over wires that aren't neighbours: tie the ovals together
+                tie_x = edge + out * (10 + 6 * self.level)
+                for r in rects:
+                    y = r.center().y()
+                    path.moveTo(r.right() if out == 1 else r.left(), y)
+                    path.lineTo(tie_x, y)
+                path.moveTo(tie_x, rects[0].center().y())
+                path.lineTo(tie_x, rects[-1].center().y())
+                lead = QPointF(tie_x, rects[0].center().y())
+            kind, pin = parse_shield_term(d.shield_term_at(self.group, ref), ref)
+            target = None
+            if kind == SHIELD_BACKSHELL and conn.shell:
+                target = conn.port_pos(SHELL)
+            elif kind == "PIN" and pin in conn.pins:
+                target = conn.port_pos(pin)
+            if target is not None:      # square lead: out, along to the port's row, back in to the port
+                lane_x = lead.x() + out * (12 + 5 * self.level)
+                path.moveTo(lead)
+                path.lineTo(lane_x, lead.y())
+                path.lineTo(lane_x, target.y())
+                path.lineTo(target)
+            elif kind == SHIELD_FLOAT:
+                path.moveTo(lead)
+                path.lineTo(lead.x() + out * 8, lead.y())
+                path.moveTo(lead.x() + out * 8, lead.y() - 5)
+                path.lineTo(lead.x() + out * 8, lead.y() + 5)
+            text = self.gid + ("" if kind else " ?")
+            lab = scene.addSimpleText(text, FONT)
+            lab.setBrush(SHIELD_COLOR)
+            lab.setZValue(1.6)
+            lab.setPos(rects[0].center().x() - lab.boundingRect().width() / 2, rects[0].top() - 15)
+            self.labels.append(lab)
+        self.setPath(path)
+        self.restyle()
+
+    @staticmethod
+    def _runs(conn: "ConnectorItem", pts: dict, d: CableDesign, members: set[str]) -> list[list[str]]:
+        """Member pins in the connector's row order, split where a row carrying another wire lies between."""
+        order = [p for p in conn.pins if p in pts] + [p for p in pts if p not in conn.pins]
+        idx = {p: i for i, p in enumerate(conn.pins)}
+        others = {p for w in d.wires if w.wire_id not in members
+                  for r, p in ((w.from_ref, w.from_pin), (w.to_ref, w.to_pin)) if r == conn.ref}
+        runs: list[list[str]] = []
+        prev = None
+        for p in order:
+            between = conn.pins[idx[prev] + 1:idx[p]] if prev in idx and p in idx else []
+            if prev is None or any(b in others for b in between):
+                runs.append([])
+            runs[-1].append(p)
+            prev = p
+        return runs
+
+    def paint(self, painter, option, widget=None):
+        from PySide6.QtWidgets import QStyle
+
+        option.state &= ~QStyle.State_Selected        # selection shows as a heavier pen, not a bounding box
+        super().paint(painter, option, widget)
+
+    def restyle(self):
+        pen = QPen(QColor("#2b6cb0") if self.isSelected() else SHIELD_COLOR, 2.2 if self.isSelected() else 1.4)
+        pen.setStyle(Qt.DashLine)
+        self.setPen(pen)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemSelectedHasChanged:
+            self.restyle()
+        return super().itemChange(change, value)
+
+    def shape(self):
+        from PySide6.QtGui import QPainterPathStroker
+
+        s = QPainterPathStroker()
+        s.setWidth(8)
+        return s.createStroke(self.path())
+
+
 class HarnessScene(QGraphicsScene):
     def __init__(self, doc: Document, view_state: "CanvasView"):
         super().__init__(view_state)
@@ -263,6 +437,7 @@ class HarnessScene(QGraphicsScene):
         self.connectors: dict[str, ConnectorItem] = {}
         self.splices: dict[str, SpliceItem] = {}
         self.wires: list[WireItem] = []
+        self.shields: dict[str, ShieldItem] = {}
         self.dragging = None        # (item, pin, start QPointF)
         self.rubber = None
         self._building = False
@@ -271,9 +446,10 @@ class HarnessScene(QGraphicsScene):
     # --- build -----------------------------------------------------------------------------------
     def rebuild(self, severities: dict[tuple[str, str], str] | None = None):
         self._building = True
-        selected = {(type(i).__name__, getattr(i, "ref", getattr(i, "wire_id", ""))) for i in self.selectedItems()}
+        selected = {(type(i).__name__, getattr(i, "ref", getattr(i, "wire_id", getattr(i, "gid", ""))))
+                    for i in self.selectedItems()}
         self.clear()
-        self.connectors, self.splices, self.wires = {}, {}, []
+        self.connectors, self.splices, self.wires, self.shields = {}, {}, [], {}
         d = self.doc.design
         positions = auto_positions(d)
         left, right = assign_sides(d)
@@ -297,10 +473,15 @@ class HarnessScene(QGraphicsScene):
             item = WireItem(w, d.group(w.group) if w.group else None)
             self.addItem(item)
             self.wires.append(item)
+        for g in d.groups:
+            if g.shielded and d.group_members(g.group_id):
+                item = ShieldItem(g, d.group_level(g.group_id))
+                self.addItem(item)
+                self.shields[g.group_id] = item
         self.apply_severities(severities or {})
         self.reroute()
         for it in self.items():
-            key = (type(it).__name__, getattr(it, "ref", getattr(it, "wire_id", "")))
+            key = (type(it).__name__, getattr(it, "ref", getattr(it, "wire_id", getattr(it, "gid", ""))))
             if key in selected:
                 it.setSelected(True)
         self._building = False
@@ -326,6 +507,8 @@ class HarnessScene(QGraphicsScene):
             if db == 0:
                 db = 1 if a.x() > b.x() else -1
             item.route(a, b, da, db)
+        for shield in self.shields.values():
+            shield.layout(self)
 
     def item_moved(self, _item):
         if not self._building:
@@ -364,6 +547,8 @@ class HarnessScene(QGraphicsScene):
 
     def mousePressEvent(self, e):
         hit = self._port_under(e.scenePos())
+        if hit and hit[1] == SHELL:
+            hit = None          # the SHELL port takes shield terminations (right-click a shield), not wires
         if hit and e.button() == Qt.LeftButton and (isinstance(hit[0], ConnectorItem) or e.modifiers() & Qt.ShiftModifier):
             item, pin = hit
             start = item.port_pos(pin)
@@ -389,7 +574,7 @@ class HarnessScene(QGraphicsScene):
             self.removeItem(self.rubber)
             self.dragging, self.rubber = None, None
             hit = self._port_under(e.scenePos())
-            if hit and not (hit[0] is src and hit[1] == src_pin):
+            if hit and hit[1] != SHELL and not (hit[0] is src and hit[1] == src_pin):
                 self.owner.add_wire(src.ref, src_pin, hit[0].ref, hit[1])
             e.accept()
             return
@@ -410,13 +595,55 @@ class HarnessScene(QGraphicsScene):
         e.acceptProposedAction()
 
     def contextMenuEvent(self, e):
+        under = self.items(e.scenePos())
+        conn = next((i for i in under if isinstance(i, ConnectorItem)), None)
+        shield = next((i for i in under if isinstance(i, ShieldItem)), None)
+        if shield is None:
+            shield = next((s for s in self.shields.values() if s.shape().contains(e.scenePos())), None)
         wires = [i.wire_id for i in self.selectedItems() if isinstance(i, WireItem)]
         menu = QMenu()
+        if conn is not None:
+            ref = conn.ref
+            act = menu.addAction(f"Show {ref} Shell connection")
+            act.setCheckable(True)
+            act.setChecked(conn.shell)
+            if conn.shell_used:
+                act.setEnabled(False)
+                act.setToolTip("A shield is terminated to this shell")
+            act.toggled.connect(lambda on, r=ref: self.owner.set_show_shell(r, on))
+            pin = conn.pin_at(e.scenePos(), tolerance=CONN_W) if conn.pin_at(e.scenePos(), tolerance=CONN_W) != SHELL else None
+            if pin:
+                menu.addAction(f"Move pin {pin} up", lambda r=ref, p=pin: self.owner.move_pin(r, p, -1))
+                menu.addAction(f"Move pin {pin} down", lambda r=ref, p=pin: self.owner.move_pin(r, p, 1))
+            menu.addAction(f"Arrange {ref} pins: keep each shield's wires together",
+                           lambda r=ref: self.owner.arrange_pins(r))
+            menu.addSeparator()
+        if shield is not None:
+            gid = shield.gid
+            d = self.doc.design
+            for ref in d.group_refs(gid):
+                if ref not in self.connectors:
+                    continue
+                c_item = self.connectors[ref]
+                sub = menu.addMenu(f"Terminate {gid} at {ref}")
+                sub.addAction("Shell (shield to " + d.shell_name(ref).lower() + ")",
+                              lambda r=ref: self.owner.terminate_shield(gid, r, SHELL))
+                sub.addAction("Float (insulate the shield end)", lambda r=ref: self.owner.terminate_shield(gid, r, SHIELD_FLOAT))
+                pins = sub.addMenu("Pin")
+                for p in c_item.pins[:128]:
+                    pins.addAction(p + ("" if p not in c_item.used else "  (in use)"),
+                                   lambda r=ref, p=p: self.owner.terminate_shield(gid, r, f"{r}-{p}"))
+            menu.addAction(f"Remove shield {gid}", lambda: self.owner.remove_shield(gid))
+            menu.addSeparator()
         if wires:
+            menu.addAction(f"Add shield over {len(wires)} selected wire(s)", lambda: self.owner.shield_wires(wires))
             sub = menu.addMenu(f"Group {len(wires)} wire(s) as")
             for kind in GROUP_KINDS:
                 sub.addAction(kind.title(), lambda k=kind: self.owner.group_wires(wires, k))
             menu.addAction("Remove from group", lambda: self.owner.group_wires(wires, None))
+        if self.doc.design.wires:
+            menu.addAction("Add overall shield over the entire bundle",
+                           lambda: self.owner.shield_wires([w.wire_id for w in self.doc.design.wires]))
         menu.addAction("Add connector here", lambda: self.owner.add_connector(e.scenePos()))
         menu.addAction("Add splice here", lambda: self.owner.add_splice(e.scenePos()))
         if self.selectedItems():
@@ -551,6 +778,8 @@ class CanvasView(QWidget):
                 self.doc.select("splice", it.ref)
             elif isinstance(it, WireItem):
                 self.doc.select("wire", it.wire_id)
+            elif isinstance(it, ShieldItem):
+                self.doc.select("group", it.gid)
 
     def highlight(self, kind: str, key: str):
         target = None
@@ -560,6 +789,8 @@ class CanvasView(QWidget):
             target = self.scene.splices.get(key)
         elif kind == "wire":
             target = next((w for w in self.scene.wires if w.wire_id == key), None)
+        elif kind == "group":
+            target = self.scene.shields.get(key)
         if target and not target.isSelected():
             self.scene.blockSignals(True)
             self.scene.clearSelection()
@@ -649,6 +880,42 @@ class CanvasView(QWidget):
         elif t == "wire":
             self.wire_pn.setCurrentText(pn)
 
+    # --- shields, shell and pin order -------------------------------------------------------------------
+    def set_show_shell(self, ref: str, on: bool):
+        if self.doc.design.connector(ref) and self.doc.design.connector(ref).show_shell != on:
+            self.doc.edit(f"{'Show' if on else 'Hide'} {ref} shell", lambda d: setattr(d.connector(ref), "show_shell", on))
+
+    def shield_wires(self, wire_ids: list[str]):
+        gid = self.doc.edit("Add shield", lambda d: add_shield(d, wire_ids))
+        self.doc.select("group", gid)
+        return gid
+
+    def terminate_shield(self, gid: str, ref: str, value: str):
+        self.doc.edit(f"Terminate {gid} at {ref}", lambda d: set_shield_term(d, gid, ref, value))
+
+    def remove_shield(self, gid: str):
+        self.doc.edit(f"Remove shield {gid}", lambda d: remove_group(d, gid))
+
+    def move_pin(self, ref: str, pin: str, step: int):
+        item = self.scene.connectors.get(ref)
+        if item is None or pin not in item.pins:
+            return
+        order = list(item.pins)
+        i = order.index(pin)
+        j = min(max(i + step, 0), len(order) - 1)
+        if i == j:
+            return
+        order[i], order[j] = order[j], order[i]
+        self.doc.edit(f"Move {ref}-{pin}", lambda d: setattr(d.connector(ref), "pin_order", order))
+
+    def arrange_pins(self, ref: str):
+        item = self.scene.connectors.get(ref)
+        if item is None:
+            return
+        order = self.doc.design.arranged_pins(ref, list(item.pins))
+        if order != item.pins:
+            self.doc.edit(f"Arrange {ref} pins", lambda d: setattr(d.connector(ref), "pin_order", order))
+
     def group_wires(self, wire_ids: list[str], kind: str | None):
         def apply(d: CableDesign):
             if kind is None:
@@ -670,10 +937,13 @@ class CanvasView(QWidget):
         wires = {i.wire_id for i in items if isinstance(i, WireItem)}
         conns = {i.ref for i in items if isinstance(i, ConnectorItem)}
         splices = {i.ref for i in items if isinstance(i, SpliceItem)}
-        if not (wires or conns or splices):
+        shields = {i.gid for i in items if isinstance(i, ShieldItem)}
+        if not (wires or conns or splices or shields):
             return
 
         def apply(d: CableDesign):
+            for gid in shields:
+                remove_group(d, gid)
             d.wires = [w for w in d.wires if w.wire_id not in wires and not ({w.from_ref, w.to_ref} & (conns | splices))]
             d.connectors = [c for c in d.connectors if c.ref not in conns]
             d.splices = [s for s in d.splices if s.ref not in splices]
