@@ -512,7 +512,7 @@ class HarnessScene(QGraphicsScene):
                 drain = next((g.group_id for g, p in d.shield_pins(ref) if p == pin), "")
                 rows.append(_Row(pin, "", wire, shield_of=drain if wire is None else ""))
             if conn.shell:          # leads to the SHELL port run down their column to the bottom row
-                rows += [_Row(SHELL, "", None, shield_of=g.group_id, shell=True) for g in d.shell_terminations(ref)]
+                rows.append(_Row(SHELL, "", None, shell=True))
             self.shield_cols[ref] = _shield_columns(d, ref, rows)
         for shield in self.shields.values():
             shield.layout(self)
