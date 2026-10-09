@@ -68,7 +68,7 @@ def test_rename_connector_updates_references(win):
     d = win.doc.design
     assert d.connector("J7") and not d.connector("P2")
     assert all("P2" not in (w.from_ref, w.to_ref) for w in d.wires)
-    assert d.splice("SP1").near == "J7" and d.group("TSP1").term_to == "J7-11"
+    assert d.splice("SP1").near == "J7" and d.group("TSP1").term_to == "J7-L"
 
 
 def test_drag_pin_to_pin_creates_wire(win, qtbot):
@@ -76,7 +76,7 @@ def test_drag_pin_to_pin_creates_wire(win, qtbot):
     canvas.wire_pn.setCurrentText("M22759/16-22-9")
     scene, view = canvas.scene, canvas.view
     p1, p2 = scene.connectors["P1"], scene.connectors["P2"]
-    a, b = p1.port_pos("13"), p2.port_pos("13")
+    a, b = p1.port_pos("N"), p2.port_pos("N")
     vp = view.viewport()
     pa, pb = view.mapFromScene(a), view.mapFromScene(b)
     QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, pa)
@@ -84,7 +84,7 @@ def test_drag_pin_to_pin_creates_wire(win, qtbot):
     QTest.mouseMove(vp, pb)
     QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, pb)
     new = win.doc.design.wires[-1]
-    assert (new.wire_id, new.from_ref, new.from_pin, new.to_ref, new.to_pin) == ("W14", "P1", "13", "P2", "13")
+    assert (new.wire_id, new.from_ref, new.from_pin, new.to_ref, new.to_pin) == ("W14", "P1", "N", "P2", "N")
     assert new.wire_pn == "M22759/16-22-9" and new.gauge == "22" and new.color == "WHT"   # from the library
     assert len(win.canvas.scene.wires) == 14
     win.analyzer.run()
@@ -185,3 +185,60 @@ def test_import_sample_library(win):
     assert lib.get("D38999/26WD35SN").contacts == 37 and lib.get("M22759/32-22-9").awg == 22
     win.doc.undo_stack.undo()
     assert win.doc.design.library.get("M22759/32-22-9") is None
+
+
+def test_contact_info_and_contacts_included_column(win):
+    from cable_desktop.panels import contact_info
+    from cable_desktop.tables import SPECS
+
+    d = win.doc.design
+    text = contact_info(d, "connector", d.connector("P1"))
+    assert "M39029/56-351" in text and "Supplied with the connector" in text and "Insert 15-18" in text
+    col = next(c for c in SPECS["parts"].columns if c.field == "contacts_included")
+    assert col.kind == "bool"
+
+
+def test_calculators_tab(win, tmp_path):
+    calc_panel = win.calculators
+    assert win.centre.indexOf(calc_panel) == 2 and win.centre.tabText(2) == "Calculators"
+    ws = calc_panel.wire_size
+    ws.awg.setCurrentText("22")
+    assert ws.out["cma"].text() == "754 cmil" and ws.out["nearest"].text().startswith("22 AWG (19/34)")
+    ws.set_mode("Strands")
+    ws.strand_size.setValue(32)
+    ws.strand_count.setValue(19)
+    assert ws.out["nearest"].text().startswith("20 AWG")
+    ws._row_clicked(0, 0)                                  # reference table row -> AWG 26
+    assert ws.mode_key() == "AWG" and ws.awg.currentText() == "26" and ws.out["cma"].text() == "304 cmil"
+
+    b = calc_panel.bundle
+    b.clear_rows()
+    b.add_row("wire", "M22759/16", None, 2, 20)
+    b.add_row("wire", "M22759/16", None, 6, 22)
+    assert b.rows[0].source.text() == "table" and b.rows[0].od.value() == pytest.approx(0.062)
+    cable = b.add_row("cable", "M27500-22TG2T14")
+    assert cable.source.text() == "library" and cable.od.value() == pytest.approx(0.135)
+    typed = b.add_row("cable", "M27500-20SB3T23")
+    typed.od.setValue(0.180)
+    assert typed.source.text() == "typed"
+    assert b.out_dia.text().startswith("0.328 in")
+    b.packing.setValue(1.3)
+    assert b.out_dia.text().startswith("0.355 in")
+    # fit check against library parts, and its on/off switch
+    combo = b.fit_parts["backshell"]
+    combo.setCurrentIndex(combo.findData("M85049/38S15W"))
+    assert b.fit_status["backshell"].text().startswith("OK")
+    b.fit_enable.setChecked(False)
+    assert b.fit_box.isHidden()
+    b.fit_enable.setChecked(True)
+    # load from a connector, and its on/off switch
+    b.connector.setCurrentText("P1")
+    b.packing.setValue(1.2)
+    b.load_connector()
+    assert sum(r.qty.value() for r in b.rows) == 10 and b.out_dia.text().startswith("0.257 in")
+    b.load_enable.setChecked(False)
+    assert b.load_btn.isHidden() and b.connector.isHidden()
+    out = tmp_path / "bundle.csv"
+    b.export_csv(str(out))
+    text = out.read_text()
+    assert "Bundle diameter (in),0.257" in text and "M27500-22TG2T14" in text

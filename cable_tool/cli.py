@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--drawn-by")
     parser.add_argument("--date")
     parser.add_argument("--length", type=float, help="Overall length (two-connector cables)")
+    parser.add_argument("--datum", help="Connector whose face is DATUM A for dimensioning (default: the first connector)")
     parser.add_argument("--units", help="Length units, e.g. IN or MM")
     args = parser.parse_args(argv)
 
@@ -72,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
             setattr(tb, attr, value)
     if args.length is not None:
         design.overall_length = args.length
+    if args.datum:
+        design.datum = args.datum
     if args.units:
         design.units = args.units.upper()
 

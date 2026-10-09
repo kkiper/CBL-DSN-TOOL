@@ -23,6 +23,7 @@ from cable_tool.model import CableDesign, TitleBlock
 from cable_tool.project import apply_table, load_design
 
 from . import __version__
+from .calculators import CalculatorsPanel
 from .canvas_view import CanvasView
 from .dialogs import DesignDialog, ExportDialog, NewPartDialog
 from .document import PROJECT_EXT, Document
@@ -82,6 +83,8 @@ class MainWindow(QMainWindow):
         self.centre = QTabWidget()
         self.centre.addTab(self.canvas, "Harness")
         self.centre.addTab(self.preview, "Drawing")
+        self.calculators = CalculatorsPanel(self.doc)
+        self.centre.addTab(self.calculators, "Calculators")
         self.setCentralWidget(self.centre)
 
         self.library = LibraryPanel(self.doc, self.new_part, lambda: self.import_table("parts"))

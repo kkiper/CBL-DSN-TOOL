@@ -98,7 +98,7 @@ def test_groups_in_wire_list_and_tables():
     assert {g.group_id for g in design.groups} == {"TSP1", "TP2"}
     assert [w.wire_id for w in design.group_members("TSP1")] == ["W3", "W4"]
     assert design.splice("SP1").near == "P2"
-    assert design.pins_used("P2")[-3:] == ["10", "11", "12"]   # 11 is the TSP1 shield drain
+    assert design.pins_used("P2")[-3:] == ["K", "L", "M"]   # L is the TSP1 shield drain
 
 
 def load_design_with_groups():
@@ -115,7 +115,7 @@ def load_design_with_groups():
 def test_wiring_diagram_shows_groups_shields_and_splices():
     design, _ = load_design_with_groups()
     sheets, _ = build_drawing(design)
-    svg = sheet_to_svg(sheets[1])
+    svg = sheet_to_svg(sheets[2])
     assert ">SP1<" in svg and ">M81824/1-1<" in svg       # splice node
     assert ">TSP1<" in svg and ">TP2<" in svg             # group labels
     assert ">TSP1 SHIELD<" in svg and ">TSP1 SHLD<" in svg  # shield drain row on P2-11
@@ -241,7 +241,7 @@ def test_part_type_mismatch_and_missing_parts():
 def test_dxf_structure():
     design, _ = load_design_with_groups()
     sheets, _ = build_drawing(design)
-    text = sheet_to_dxf(sheets[1])
+    text = sheet_to_dxf(sheets[2])
     assert text.startswith("0\nSECTION\n2\nHEADER") and text.rstrip().endswith("EOF")
     assert "AC1009" in text and "\nSHIELDS\n" in text and "\nDASHED\n" in text
     ezdxf = pytest.importorskip("ezdxf")
@@ -253,7 +253,7 @@ def test_dxf_structure():
     texts = {e.dxf.text for e in msp.query("TEXT")}
     assert {"P1", "P2", "SP1", "TSP1", "WIRING DIAGRAM"} <= texts
     xs = [v[0] for e in msp.query("LINE") for v in (e.dxf.start, e.dxf.end)]
-    assert 0 < min(xs) and max(xs) < sheets[1].width / 72     # true size in inches
+    assert 0 < min(xs) and max(xs) < sheets[2].width / 72     # true size in inches
     assert ezdxf.__version__
 
 
@@ -270,7 +270,8 @@ def test_cli_dxf_drc_and_strict(tmp_path, capsys):
             "-l", str(SAMPLES / "parts_library.csv"), "--length", "48", "--dwg-no", "W101",
             "-o", str(tmp_path / "w.pdf"), "--dxf", str(tmp_path / "dxf"), "--drc", str(tmp_path / "drc.csv"), "--strict"]
     assert main(args) == 0
-    assert sorted(p.name for p in (tmp_path / "dxf").iterdir()) == ["W101_sheet1.dxf", "W101_sheet2.dxf", "W101_sheet3.dxf"]
+    assert sorted(p.name for p in (tmp_path / "dxf").iterdir()) == ["W101_sheet1.dxf", "W101_sheet2.dxf", "W101_sheet3.dxf",
+                                                                         "W101_sheet4.dxf"]
     drc = pd.read_csv(tmp_path / "drc.csv")
     assert "ERROR" not in set(drc["Severity"])
     # Swap in a connector whose contacts don't take 20 AWG: --strict now fails
@@ -279,4 +280,4 @@ def test_cli_dxf_drc_and_strict(tmp_path, capsys):
     (tmp_path / "bad.csv").write_text(bad)
     args[args.index(str(SAMPLES / "parts_library.csv"))] = str(tmp_path / "bad.csv")
     assert main(args) == 1
-    assert "error: [Contact wire size] P1-1: Wire W1 is 20 AWG" in capsys.readouterr().err
+    assert "error: [Contact wire size] P1-A: Wire W1 is 20 AWG" in capsys.readouterr().err

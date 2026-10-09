@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from .bom import check_design
+from .inserts import layout_for
 from .library import Part, bundle_diameter, circular_mils, parse_awg, typical_od
 from .model import SHIELD_BACKSHELL, SHIELD_FLOAT, CableDesign, Wire, WireGroup, fmt_dia, parse_shield_term
 
@@ -64,6 +65,16 @@ class Bundle:
 
 
 @dataclass
+class BundleItem:
+    kind: str                     # wire | cable
+    pn: str
+    awg: float | None
+    od: float | None              # inches
+    estimated: int = 0            # ODs estimated from AWG
+    unknown: int = 0              # ODs that couldn't be found
+
+
+@dataclass
 class DrcReport:
     findings: list[Finding] = field(default_factory=list)
     bundles: dict[str, Bundle] = field(default_factory=dict)
@@ -91,6 +102,26 @@ class DrcReport:
     def to_dataframe(self) -> pd.DataFrame:
         return pd.DataFrame([{"Severity": f.severity, "Rule": f.rule, "Item": f.item, "Message": f.message}
                              for f in self.sorted()], columns=["Severity", "Rule", "Item", "Message"])
+
+
+FIT_OK, TOO_BIG, TOO_SMALL = "OK", "TOO BIG", "TOO SMALL"
+
+
+def fit_status(value: float, lo: float | None, hi: float | None) -> str | None:
+    """A diameter against a part's Dia Min / Dia Max: OK, TOO BIG (won't pass), TOO SMALL (won't grip or shrink
+    down), or None if the part has no range."""
+    if lo is None and hi is None:
+        return None
+    if hi is not None and value > hi:
+        return TOO_BIG
+    if lo is not None and value < lo:
+        return TOO_SMALL
+    return FIT_OK
+
+
+def bundle_items(design: CableDesign, ref: str) -> list[BundleItem]:
+    """The wires and cables counted in the bundle at connector ``ref`` (the same items the DRC uses)."""
+    return _Checker(design).bundle_items(ref)
 
 
 def _awg(x: float | None) -> str:
@@ -181,12 +212,13 @@ class _Checker:
         if part is None or value is None:
             return
         lo, hi = part.dia_range
-        if lo is None and hi is None:
+        status = fit_status(value, lo, hi)
+        if status is None:
             self.no_param[(pn, "Dia Min/Max")].add(item)
             return
-        if hi is not None and value > hi:
+        if status == TOO_BIG:
             self.r.add(ERROR, rule, item, f"{what} {self.dia(value)} is larger than {pn} max {self.dia(hi)}: {over_msg}")
-        elif lo is not None and value < lo:
+        elif status == TOO_SMALL:
             self.r.add(under_severity, rule, item, f"{what} {self.dia(value)} is smaller than {pn} min {self.dia(lo)}: {under_msg}")
 
     # rules -----------------------------------------------------------------
@@ -211,6 +243,10 @@ class _Checker:
         for c in self.d.connectors:
             conn = self.part(c.connector_pn, "connector", c.ref)
             contact_pn = self.d.contact_pn(c.ref)
+            if conn and conn.contact_pn and c.contact_pn and c.contact_pn != conn.contact_pn and self.d.contacts_included(c.ref):
+                self.r.add(WARNING, "Contacts", c.ref,
+                           f"{c.connector_pn} is supplied with {conn.contact_pn} contacts, but the connector table "
+                           f"specifies {c.contact_pn}. Use the supplied contacts, or order the -LC (less contacts) version.")
             contact = self.part(contact_pn, "contact", c.ref)
             # The contact's range wins; a connector row may carry the range when contacts aren't separate.
             source = contact if contact and (contact.awg_range or any(contact.dia_range)) else conn
@@ -221,6 +257,16 @@ class _Checker:
                            f"{len(pins)} pins are used but {c.connector_pn} has {int(conn.contacts)} contacts.")
             if not pins:
                 continue
+            found = layout_for(c.connector_pn)
+            if found:
+                info, cavs = found
+                known = {cav.contact for cav in cavs}
+                bad = [p for p in pins if p not in known]
+                if bad:
+                    self.r.add(ERROR, "Contact position", c.ref,
+                               f"Pin(s) {', '.join(bad)} aren't in insert arrangement {info.insert_name} of "
+                               f"{c.connector_pn} (contacts {', '.join(cav.contact for cav in cavs[:3])} … "
+                               f"{cavs[-1].contact}). Contact labels are case-sensitive.")
             awg_range = source.awg_range if source else None
             if source and awg_range is None:
                 self.no_param[(source_pn, "AWG Min/Max")].add(c.ref)
@@ -330,29 +376,33 @@ class _Checker:
             if kinds and all(k == SHIELD_FLOAT for k in kinds):
                 self.r.add(WARNING, "Shield termination", g.group_id, "Shield floats at both ends, so it gives no shielding.")
 
+    def bundle_items(self, ref: str) -> list[BundleItem]:
+        """What lands on connector ``ref``: each wire, and each cable or shielded group once (at its OD)."""
+        items: list[BundleItem] = []
+        seen_groups = set()
+        for w in self.d.wires:
+            if ref not in (w.from_ref, w.to_ref):
+                continue
+            g = self.d.group(w.group) if w.group else None
+            if g and (g.cable_pn or g.shielded):
+                if g.group_id in seen_groups:
+                    continue
+                seen_groups.add(g.group_id)
+                od, e, u = self.group_od(g)
+                items.append(BundleItem("cable", g.cable_pn or f"{g.group_id} (SHIELDED GROUP)", None, od, e, u))
+            else:
+                od, e = self.wire_od(w)
+                items.append(BundleItem("wire", w.wire_pn or f"{w.wire_id} WIRE", self.wire_awg(w), od, int(e),
+                                        int(od is None)))
+        return items
+
     def bundles(self) -> None:
         for c in self.d.connectors:
-            members = [w for w in self.d.wires if c.ref in (w.from_ref, w.to_ref)]
+            members = self.bundle_items(c.ref)
             if not members:
                 continue
-            ods, est, unk, count = [], 0, 0, 0
-            seen_groups = set()
-            for w in members:
-                g = self.d.group(w.group) if w.group else None
-                if g and (g.cable_pn or g.shielded):
-                    if g.group_id in seen_groups:
-                        continue
-                    seen_groups.add(g.group_id)
-                    od, e, u = self.group_od(g)
-                    est += e
-                    unk += u
-                else:
-                    od, e = self.wire_od(w)
-                    est += e
-                    unk += od is None
-                count += 1
-                if od is not None:
-                    ods.append(od)
+            ods = [m.od for m in members if m.od is not None]
+            est, unk, count = sum(m.estimated for m in members), sum(m.unknown for m in members), len(members)
             dia = bundle_diameter(ods)
             b = Bundle(c.ref, dia, count, est, unk)
             self.r.bundles[c.ref] = b

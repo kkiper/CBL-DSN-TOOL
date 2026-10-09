@@ -10,9 +10,10 @@ with a parts list, wiring diagram, wire list, and a design rule check (DRC) driv
 
 | Sheet | Contents |
 |---|---|
-| 1 | Assembly view (connectors, backshells, boots, ID labels, splices, dimensions, find-number balloons, flag notes), parts list, general and flag notes, revision block, application block, tolerance block, title block |
-| 2 | Wiring diagram: a pin-out table per connector; wires pin to pin or to splice nodes; twisted-pair marks, shield and cable-jacket outlines, and shield terminations (to backshell, drain to a pin, or floating) |
-| 3+ | Wire list, wire groups and shields, splices, label schedule, and any parts-list continuation |
+| 1 | General and flag notes, parts list, revision block, application block, tolerance block, title block |
+| 2 | Assembly view (connectors, backshells, boots, ID labels, splices, dimensions, find-number balloons, flag notes) with each connector's pinout drawn under it |
+| 3 | Wiring diagram: a pin-out table per connector, including NC positions; wires pin to pin or to splice nodes; twisted-pair marks, shield and cable-jacket outlines, and shield terminations (to backshell, drain to a pin, or floating) |
+| 4+ | Wire list, wire groups and shields, splices, label schedule, and any parts-list continuation |
 
 ## Desktop app
 
@@ -41,6 +42,19 @@ python -m cable_desktop                # or: python -m cable_desktop project.cbl
 - **Design rule check** runs as you edit. Items with errors are outlined red on the canvas, warnings amber.
   Double-click a finding to jump to the item.
 - The **Drawing** tab previews every sheet. *Smallest sheet* sets the starting size (see below).
+- The **Calculators** tab has two calculators:
+  - **Wire size (AWG / CMA / mm²):** convert from an AWG (including 1/0 to 4/0), a CMA, a cross-section in mm², or
+    a custom conductor given as strand size (AWG, in or mm) and strand count. The result gives the CMA, the mm², the
+    equivalent solid AWG, the nearest M22759 size and the smallest M22759 size at least that big, plus typical
+    M22759/16 and /32 ODs. A reference table lists the M22759 stranding, CMA, mm² and OD by size; click a row to
+    load it.
+  - **Bundle diameter:** add M22759 wire rows (slash sheet and AWG, OD from the built-in table or the library) and
+    cable rows such as M27500 (OD from the parts library, or typed), each with a quantity. The bundle diameter uses
+    D = packing factor × √Σd², the same rule as the DRC; the packing factor defaults to 1.2 and can be changed.
+  - **Bundle options:** *Load from connector* fills the rows with what lands on a connector in the open project.
+    *Fit check* compares the bundle with a library backshell, boot and label using the DRC's rules. Each can be
+    switched off. *Copy* and *Export CSV* save the calculation.
+  - The stranding and OD values are nominal: check them against the current slash sheets.
 - *Design → Title block, revisions and notes* (Ctrl+T) fills the title block, application block, revision
   history and general notes. *File → Export drawing package* (Ctrl+E) writes PDF, DXF, SVG, BOM, DRC report and the
   project workbook.
@@ -129,7 +143,7 @@ for example `OD (mm)`.
 |---|---|
 | wire | AWG, OD (insulation) |
 | cable | OD (jacket), Conductors, AWG |
-| connector | Contact P/N (default contact), Contacts (cavity count); AWG Min/Max and Dia Min/Max when contacts aren't separate parts |
+| connector | Contact P/N (default contact), Contacts (cavity count), Contacts Included (YES/NO; blank = D38999 P/Ns include them unless they end in `-LC`); AWG Min/Max and Dia Min/Max when contacts aren't separate parts |
 | contact | AWG Min/Max (accepted wire), Dia Min/Max (insulation OD sealing range) |
 | backshell | Dia Min/Max = cable clamp range |
 | heatshrink, label, marker | Dia Min = fully recovered ID, Dia Max = expanded (as supplied) ID |
@@ -147,13 +161,41 @@ command line, pass them with `-l`.
 
 | File | Contents |
 |---|---|
-| `d38999_series_iii.csv` | 476 parts. D38999 Series III plugs (`/26`), wall-mount (`/20`) and jam-nut (`/24`) receptacles in F, W and Z finishes, pin and socket, N key, for 26 single-contact-size insert arrangements (size 22D, 20 and 16). Each has its contact count and default M39029 contact. Also the M39029/56 and /58 crimp contacts (sizes 22D, 20, 16, 12) with their AWG ranges and approximate wire sealing ranges. |
+| `d38999_series_iii.csv` | 944 parts. D38999 Series III plugs (`/26`), wall-mount (`/20`) and jam-nut (`/24`) receptacles in F, W and Z finishes, pin and socket, N key, for 26 single-contact-size insert arrangements (size 22D, 20 and 16), each as the standard P/N (supplied with contacts) and the `-LC` (less contacts) P/N. Each has its contact count and linked M39029 contact. Also the M39029/56 and /58 crimp contacts (sizes 22D, 20, 16, 12) with their AWG ranges and approximate wire sealing ranges. |
 | `m22759_wire.csv` | 170 wires. M22759/16 (24–8 AWG) and /32 (26–12 AWG), colour codes −0 to −9, with AWG and approximate nominal OD. |
 
 They're generated by `tools/gen_libraries.py`; edit the tables there and rerun it to add arrangements, finishes or
 wire specs. Part numbers, contact assignments and AWG ranges follow the specs. **ODs and sealing ranges are
 approximate sample values: check them against the current slash sheets before relying on the DRC.** Mixed-size
 insert arrangements aren't included, because a connector has one default contact P/N.
+
+### Contacts supplied with connectors
+
+D38999 part numbers come with their contacts unless they end in `-LC` (less contacts). For those connectors the parts
+list doesn't add a contact line, the notes say which contacts are supplied with which find numbers, and the DRC still
+checks every wire against the linked contact's AWG and sealing range. Set *Contacts Included* in the library to
+override the rule for any part. A connector-table *Contact P/N* that differs from the supplied contact is a warning.
+
+### Connector pinouts and NC positions
+
+Sheet 2 draws a pinout under each connector whose insert arrangement is known. It is the front (engaging) face of
+the connector called out in the parts list: every cavity with its contact letter or number, wired contacts filled,
+unused (NC) contacts open, plus the P/N, insert arrangement, key position and contact type. The assembly view and its
+pinouts are scaled together to fit the sheet, down to the ASME minimum letter height; past that the drawing moves to
+the next sheet size (or, with a fixed sheet size, is drawn smaller with a format warning). Layouts are in
+`cable_tool/data/d38999_insert_layouts.csv`: 33 MIL-DTL-38999 Series III arrangements (MIL-STD-1560), extracted from
+the vector insert-arrangement drawings by `tools/extract_insert_layouts.py` and checked against the catalogue's
+contact table. The arrangement comes from the D38999 P/N (shell letter plus arrangement number, e.g. `D38999/26WD19SN`
+is insert 15-19).
+
+- MIL-STD-1560 draws the front face of the pin insert; a socket connector's front face is its mirror image, so socket
+  pinouts are mirrored to show the actual part. Verify this against MIL-STD-1560 for your application.
+- **NC (no connection):** every contact position with no wire or shield drain is NC. Positions come from the insert
+  layout, or 1 to *Contacts* from the library when the pins are numbered. NC positions are listed in the wiring
+  diagram's pin tables (one row each, or a summary row when there are more than 24) and in a general note.
+- The master keyway isn't shown, because the source drawings don't show it.
+- Dense size-22D arrangements (D35, E35, F35, H35, J35 and others) aren't included: the source only labels the first
+  contact of each ring, so their numbering isn't documented per cavity.
 
 ### Design rule check
 
@@ -162,6 +204,8 @@ insert arrangements aren't included, because a connector has one default contact
 | Contact wire size | Each wire's gauge is within its contact's (or connector's) AWG range, at every pin | Error |
 | Contact sealing range | Wire insulation OD is within the contact/grommet sealing range | Warning |
 | Contact count | Pins used (wires plus shield drains) don't exceed the connector's contacts | Error |
+| Contact position | Every pin used exists in the connector's insert arrangement (when the layout is known; labels are case-sensitive) | Error |
+| Contacts | A connector-table contact P/N differs from the contacts supplied with the connector | Warning |
 | Splice wire size | Every wire in a splice is within its AWG range, and the total CMA is within its CMA range | Error |
 | Backshell / Boot / Label fit | Bundle diameter at each connector vs. clamp range, boot and label sleeve recovered/expanded IDs | Error if too big; warning if too small to grip |
 | Wire marker / sleeve fit | Wire OD vs. marker and sleeve recovered/expanded IDs | Error / warning |
@@ -178,19 +222,33 @@ counts once, at its OD or at its members' bundle plus shield wall). It uses the 
 *D ≈ 1.2 × √(Σ dᵢ²)*. Wire ODs come from the library, or are estimated from AWG for thin-wall wire, and the report says
 when they were estimated. The calculated diameters are also added to the drawing notes.
 
+### Dimensioning (IPC-D-620)
+
+- **Datum:** every harness dimension is measured from **DATUM A**, the face of the datum connector. By default that
+  is the first connector; pick another under *Title block and settings → Lengths and units*, with `--datum P2` on the
+  command line, or with a `Datum` row in the workbook's title sheet. The datum connector is drawn at the left and
+  marked with an ASME Y14.5 datum feature symbol.
+- **Harness length:** for a two-connector cable, the overall dimension runs from DATUM A to the far connector face.
+- **Breakout lengths:** the datum leg is dimensioned from DATUM A to the breakout centerline. Each branch is
+  dimensioned from the harness centerline at the breakout to its connector face.
+- **Splices:** you still enter a splice by its nearest connector and the distance from that face. The drawing and
+  splice table convert that to the IPC reference: from DATUM A along a two-connector cable or on the datum leg, and
+  from the breakout centerline on a branch.
+- **Note:** a general note states the convention.
+
 ### Lengths and quantities
 
 - **Two-connector cable:** enter the overall length (sidebar or `--length`). **Harness with a breakout:** enter each
   connector's length to the breakout. **Splices** need *Near* and *Distance*. A per-wire **Length** overrides all of these.
   Lengths that can't be worked out show as **AR** (as required) in the BOM.
 - Connectors, backshells, boots and labels are 1 per connector end. **Contacts** are 1 per pin used (wires plus shield
-  drains). Wire markers and wire heatshrink are 2 per wire. Shield terminations are 1 per terminated shield end.
+  drains), except for connectors supplied with their contacts. Wire markers and wire heatshrink are 2 per wire. Shield terminations are 1 per terminated shield end.
   Cables and braid are counted by length. Parts with the same P/N are combined into one BOM item.
 
 ### DXF output
 
 One AutoCAD R12 ASCII DXF per sheet, at true size in inches, with layers BORDER, TITLE_BLOCK, ASSEMBLY, CABLE, WIRING,
-SHIELDS, TABLES and NOTES. Dashed lines use the DASHED line type. R12 opens in AutoCAD, SolidWorks, Inventor, Creo,
+SHIELDS, FACE_VIEWS, TABLES and NOTES. Dashed lines use the DASHED line type. R12 opens in AutoCAD, SolidWorks, Inventor, Creo,
 DraftSight, LibreCAD, QCAD and most other CAD programs.
 
 The part numbers and parameters in the samples are illustrative examples (D38999 / MS3126 connectors, M39029
@@ -219,7 +277,7 @@ Everything runs on your computer. The desktop app and CLI make no network connec
 ```
 
 Both scripts run the packaged app's `--smoke-test` (it opens a sample and exports a full package) before finishing.
-The GitHub Actions workflow runs the tests on every push. Pushing a version tag (`git tag v0.3.0 && git push --tags`), or running the workflow by hand from the Actions tab with a version,
+The GitHub Actions workflow runs the tests on every push. Pushing a version tag (`git tag v0.4.0 && git push --tags`), or running the workflow by hand from the Actions tab with a version,
 builds the Windows installer and executable and the macOS app, smoke-tests them, and attaches them to a GitHub release.
 
 ## Tests

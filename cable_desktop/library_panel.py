@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cable_tool.library import PART_TYPES
+from cable_tool.inserts import layout_for
+from cable_tool.library import PART_TYPES, contacts_included
 
 from .canvas_view import PART_MIME
 from .document import Document
@@ -89,7 +90,7 @@ class LibraryPanel(QWidget):
             for p in sorted(groups[t], key=lambda p: p.pn):
                 it = QTreeWidgetItem([p.pn, p.description])
                 it.setData(0, Qt.UserRole, p.pn)
-                it.setToolTip(0, _summary(p))
+                it.setToolTip(0, _summary(p, self.doc.design.library))
                 it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled)
                 top.addChild(it)
             self.tree.addTopLevelItem(top)
@@ -102,7 +103,7 @@ class LibraryPanel(QWidget):
             self.doc.select("part", pn)
 
 
-def _summary(p) -> str:
+def _summary(p, library=None) -> str:
     bits = [f"{p.pn} ({p.type or 'untyped'})", p.description]
     if p.awg_range:
         bits.append(f"AWG {p.awg_range[0]:g}-{p.awg_range[1]:g}")
@@ -113,5 +114,16 @@ def _summary(p) -> str:
     if p.contacts:
         bits.append(f"{int(p.contacts)} contacts")
     if p.contact_pn:
-        bits.append(f"contact {p.contact_pn}")
+        if p.type == "connector":
+            supplied = "supplied with connector" if contacts_included(p.pn, p) else "order separately"
+            contact = library.get(p.contact_pn) if library else None
+            awg = f", AWG {contact.awg_range[0]:g}-{contact.awg_range[1]:g}" if contact and contact.awg_range else ""
+            bits.append(f"contact {p.contact_pn}{awg} ({supplied})")
+        else:
+            bits.append(f"contact {p.contact_pn}")
+    found = layout_for(p.pn) if p.type == "connector" else None
+    if found:
+        info, cavs = found
+        bits.append(f"insert {info.insert_name}, {info.contact_type} contacts {cavs[0].contact}-{cavs[-1].contact}, "
+                    f"face view available")
     return "\n".join(b for b in bits if b)

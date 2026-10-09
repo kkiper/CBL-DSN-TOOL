@@ -151,6 +151,7 @@ class CableDesign:
     units: str = "IN"
     tolerance: str = "0.5"
     overall_length: float | None = None   # used for two-connector cables when ends have no lengths
+    datum: str = ""                       # connector whose face is DATUM A (IPC-D-620); blank = the first connector
 
     # Lookups ---------------------------------------------------------------
     def connector(self, ref: str) -> ConnectorEnd | None:
@@ -171,6 +172,13 @@ class CableDesign:
     def description(self, pn: str) -> str:
         return (self.part_descriptions.get(pn) or self.library.description(pn) or "").strip()
 
+    def contacts_included(self, ref: str) -> bool:
+        """Is connector ``ref`` supplied with its contacts (so they aren't ordered separately)?"""
+        from .library import contacts_included
+
+        c = self.connector(ref)
+        return bool(c) and contacts_included(c.connector_pn, self.library.get(c.connector_pn))
+
     def contact_pn(self, ref: str) -> str:
         c = self.connector(ref)
         if not c:
@@ -179,6 +187,12 @@ class CableDesign:
             return c.contact_pn
         part = self.library.get(c.connector_pn)
         return part.contact_pn if part else ""
+
+    def datum_ref(self) -> str:
+        """Connector whose face is the dimensioning datum (IPC-D-620): ``datum`` if set, else the first connector."""
+        if self.datum and self.connector(self.datum):
+            return self.datum
+        return self.connectors[0].ref if self.connectors else ""
 
     # Lengths ---------------------------------------------------------------
     def leg_length(self, ref: str) -> float | None:
@@ -260,6 +274,28 @@ class CableDesign:
             if p not in pins:
                 pins.append(p)
         return sorted(pins, key=natural_key)
+
+    def contact_positions(self, ref: str) -> list[str]:
+        """Every contact position of connector ``ref``: from its insert layout, else 1..N from the library's contact
+        count when the pins are numbered. Empty when unknown."""
+        from .inserts import layout_for
+
+        c = self.connector(ref)
+        if not c:
+            return []
+        found = layout_for(c.connector_pn)
+        if found:
+            return [cav.contact for cav in found[1]]
+        part = self.library.get(c.connector_pn)
+        used = self.pins_used(ref)
+        if part and part.contacts and all(p.isdigit() for p in used):
+            return [str(i) for i in range(1, int(part.contacts) + 1)]
+        return []
+
+    def unused_pins(self, ref: str) -> list[str]:
+        """Contact positions of ``ref`` with nothing connected (NC)."""
+        used = set(self.pins_used(ref))
+        return [p for p in self.contact_positions(ref) if p not in used]
 
     def wire_gauge(self, w: Wire) -> float | None:
         from .library import parse_awg

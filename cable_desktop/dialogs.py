@@ -31,7 +31,7 @@ from cable_tool.canvas import sheet_to_svg, sheets_to_pdf
 from cable_tool.drawing import build_drawing
 from cable_tool.drc import run_drc
 from cable_tool.dxf import sheet_to_dxf
-from cable_tool.library import PART_TYPES, Part
+from cable_tool.library import PART_TYPES, Part, parse_bool
 from cable_tool.model import TitleBlock
 from cable_tool.project import save_design
 
@@ -86,6 +86,14 @@ class DesignDialog(QDialog):
         form.addRow("Overall length (two-connector cable)", self.length)
         form.addRow(QLabel("For a harness with a breakout, enter each connector's length to the breakout in the "
                            "Connectors table instead."))
+        self.datum = QComboBox()
+        self.datum.addItem("(first connector)", "")
+        for c in doc.design.connectors:
+            self.datum.addItem(c.ref, c.ref)
+        self.datum.setCurrentIndex(max(self.datum.findData(doc.design.datum), 0))
+        form.addRow("Datum A (IPC-D-620)", self.datum)
+        form.addRow(QLabel("Dimensions are measured from the datum connector's face; breakout lengths from the harness "
+                           "centerline at the breakout to each termination."))
         tabs.addTab(page, "Lengths and units")
 
         rev = RecordTable(doc, "revisions")
@@ -109,12 +117,13 @@ class DesignDialog(QDialog):
     def accept(self):
         values = {k: e.text().strip() for k, e in self.edits.items()}
         units, tol, length = self.units.currentText(), self.tol.text().strip() or "0.5", self.length.value() or None
+        datum = self.datum.currentData() or ""
         notes = [n for n in self.notes.toPlainText().splitlines() if n.strip()]
 
         def apply(d):
             for k, v in values.items():
                 setattr(d.title_block, k, v)
-            d.units, d.tolerance, d.overall_length, d.notes = units, tol, length, notes
+            d.units, d.tolerance, d.overall_length, d.notes, d.datum = units, tol, length, notes, datum
         self.doc.edit("Title block and settings", apply)
         super().accept()
 
@@ -208,7 +217,7 @@ def export_package(doc: Document, folder: Path, stem: str, formats: set[str]) ->
 TYPE_FIELDS = {
     "wire": ["awg", "od", "color"],
     "cable": ["awg", "od", "conductors"],
-    "connector": ["contact_pn", "contacts", "awg_min", "awg_max", "dia_min", "dia_max"],
+    "connector": ["contact_pn", "contacts", "contacts_included", "awg_min", "awg_max", "dia_min", "dia_max"],
     "contact": ["awg_min", "awg_max", "dia_min", "dia_max"],
     "backshell": ["dia_min", "dia_max"],
     "heatshrink": ["dia_min", "dia_max"],
@@ -221,7 +230,7 @@ TYPE_FIELDS = {
 }
 FIELD_HELP = {
     "awg": "AWG", "od": "OD (in)", "color": "Color", "conductors": "Conductors", "contact_pn": "Default contact P/N",
-    "contacts": "Contact count", "awg_min": "AWG min (largest wire)", "awg_max": "AWG max (smallest wire)",
+    "contacts": "Contact count", "contacts_included": "Contacts included (YES / NO / blank = P/N rule)", "awg_min": "AWG min (largest wire)", "awg_max": "AWG max (smallest wire)",
     "dia_min": "Dia min (in)", "dia_max": "Dia max (in)", "cma_min": "CMA min", "cma_max": "CMA max",
     "wall": "Wall (in)",
 }
@@ -288,6 +297,8 @@ class NewPartDialog(QDialog):
                 continue
             if f in ("color", "contact_pn"):
                 setattr(p, f, text)
+            elif f == "contacts_included":
+                p.contacts_included = parse_bool(text)
             else:
                 try:
                     setattr(p, f, float(text))

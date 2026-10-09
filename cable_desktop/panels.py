@@ -29,6 +29,8 @@ from cable_tool.canvas import sheet_to_svg
 from cable_tool.drawing import build_drawing
 from cable_tool.drc import ERROR, INFO, WARNING, DrcReport, run_drc
 from cable_tool.edit import rename
+from cable_tool.inserts import layout_for
+from cable_tool.library import contacts_included, parse_bool
 
 from .document import Document
 from .tables import SPECS
@@ -259,14 +261,19 @@ class PropertiesPanel(QWidget):
             return
         self.heading.setText(f"<b>{spec.name[:-1] if spec.name.endswith('s') else spec.name}: {self.key}</b>")
         for col in spec.columns:
-            edit = QLineEdit("" if getattr(rec, col.field) is None else
-                             (f"{getattr(rec, col.field):g}" if isinstance(getattr(rec, col.field), float)
-                              else str(getattr(rec, col.field))))
+            v = getattr(rec, col.field)
+            edit = QLineEdit("" if v is None else ("YES" if v else "NO") if isinstance(v, bool)
+                             else f"{v:g}" if isinstance(v, float) else str(v))
             if col.tip:
                 edit.setToolTip(col.tip)
             edit.editingFinished.connect(lambda c=col, e=edit: self._commit(c, e.text()))
             self.form.addRow(col.header, edit)
             self.fields[col.field] = edit
+        info = contact_info(self.doc.design, self.kind, rec)
+        if info:
+            label = QLabel(info)
+            label.setWordWrap(True)
+            self.form.addRow("Contacts", label)
 
     def _commit(self, col, text: str):
         spec, key, kind = self._spec(), self.key, self.kind
@@ -279,6 +286,8 @@ class PropertiesPanel(QWidget):
                 value = float(text) if text.strip() else None
             except ValueError:
                 return
+        elif col.kind == "bool":
+            value = parse_bool(text)
         else:
             value = text.strip()
         if value == old or (old is None and value == ""):
@@ -296,3 +305,26 @@ class PropertiesPanel(QWidget):
         if col.field == spec.key_field:
             self.key = str(value)
         self.doc.edit(f"Edit {col.header}", apply)
+
+
+def contact_info(design, kind: str, rec) -> str:
+    """Linked contact data for a connector (connector table row or library part): P/N, wire range, supply, insert."""
+    if kind == "connector":
+        pn, contact_pn, included = rec.connector_pn, design.contact_pn(rec.ref), design.contacts_included(rec.ref)
+    elif kind == "part" and rec.type == "connector":
+        pn, contact_pn, included = rec.pn, rec.contact_pn, contacts_included(rec.pn, rec)
+    else:
+        return ""
+    lines = []
+    if contact_pn:
+        c = design.library.get(contact_pn)
+        desc = f" {c.description}" if c and c.description else ""
+        awg = f", AWG {c.awg_range[0]:g}-{c.awg_range[1]:g}" if c and c.awg_range else ""
+        lines.append(f"{contact_pn}{desc}{awg}")
+    lines.append("Supplied with the connector (not a separate parts-list line)." if included
+                 else "Ordered separately (parts-list line per contact).")
+    found = layout_for(pn)
+    if found:
+        info, cavs = found
+        lines.append(f"Insert {info.insert_name} ({len(cavs)} contacts, {info.contact_type}); pinout on sheet 2.")
+    return "\n".join(lines)

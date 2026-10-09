@@ -2,7 +2,7 @@
 
 R12 is the most widely readable DXF flavour: AutoCAD, SolidWorks, Inventor, Creo, CATIA, NX,
 DraftSight, LibreCAD, QCAD and Fusion all open it. Drawings are written at true sheet size in
-inches, on layers named after the drawing areas (BORDER, TITLE_BLOCK, ASSEMBLY, WIRING, TABLES,
+inches, on layers named after the drawing areas (BORDER, TITLE_BLOCK, ASSEMBLY, WIRING, FACE_VIEWS, TABLES,
 NOTES). Cable bodies drawn as thick strokes in the PDF become two outline polylines.
 """
 
@@ -16,7 +16,7 @@ PT = 1 / 72.0   # points -> inches
 
 LAYERS = {   # name -> ACI colour
     "0": 7, "BORDER": 7, "TITLE_BLOCK": 7, "ASSEMBLY": 7, "CABLE": 7, "DIMENSIONS": 3, "BALLOONS": 5,
-    "WIRING": 7, "SHIELDS": 4, "TABLES": 7, "NOTES": 7, "TEXT": 7,
+    "WIRING": 7, "SHIELDS": 4, "FACE_VIEWS": 7, "TABLES": 7, "NOTES": 7, "TEXT": 7,
 }
 
 

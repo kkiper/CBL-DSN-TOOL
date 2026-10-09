@@ -27,7 +27,7 @@ def test_libraries_load(library):
     wire = library.get("M22759/16-20-2")
     assert wire.type == "wire" and wire.awg == 20 and wire.color == "RED" and wire.od > 0
     assert library.get("M22759/32-22-9").awg == 22
-    assert sum(p.type == "connector" for p in library.parts.values()) == 468
+    assert sum(p.type == "connector" for p in library.parts.values()) == 936
     assert sum(p.type == "wire" for p in library.parts.values()) == 170
 
 
@@ -44,11 +44,11 @@ def test_regenerated_files_match_generator():
             assert len(list(csv.reader(f))) == len(rows) + 1, f"{name} is stale: run python tools/gen_libraries.py"
 
 
-def _design(library, connector_pn: str, wire_pn: str) -> CableDesign:
+def _design(library, connector_pn: str, wire_pn: str, pin: str = "1") -> CableDesign:
     mate = connector_pn.replace("SN", "PN").replace("/26", "/20")
     return CableDesign(
         connectors=[ConnectorEnd("P1", connector_pn), ConnectorEnd("J1", mate)],
-        wires=[Wire("W1", "P1", "1", "J1", "1", wire_pn=wire_pn)],
+        wires=[Wire("W1", "P1", pin, "J1", pin, wire_pn=wire_pn)],
         library=library, overall_length=24,
     )
 
@@ -60,5 +60,5 @@ def test_drc_with_sample_libraries(library):
     assert {f.item for f in errs} == {"P1-1", "J1-1"}
     assert "M39029/56-348 accepts 22 to 28 AWG" in errs[0].message
     # Same wire in an 18-way (size 20) connector is fine
-    good = run_drc(_design(library, "D38999/26FD18SN", "M22759/16-20-2"))
+    good = run_drc(_design(library, "D38999/26FD18SN", "M22759/16-20-2", pin="A"))
     assert not [f for f in good.findings if f.severity == ERROR]

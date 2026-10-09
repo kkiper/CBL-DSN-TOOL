@@ -54,16 +54,16 @@ def test_parts_list_find_numbers_flags_and_cage():
     assert set(meta["balloons"]) <= set(meta["find_numbers"])
     assert meta["flag_notes"]["splice"] and meta["flag_notes"]["label"]
     svg = sheet_to_svg(sheets[0])
-    assert ">81349<" in svg and "INSTALL SPLICE (FIND NO. 16) AT LOCATION SHOWN" in svg
+    assert ">81349<" in svg and "INSTALL SPLICE (FIND NO. 14) AT LOCATION SHOWN" in svg
     assert not any(f.severity == "ERROR" for f in run_drc(design, sheets).findings if f.rule == "Drawing format")
 
 
 def test_pen_weights_do_not_scale():
     design = two_connector_design()
     sheets, _ = build_drawing(design)
-    svg = sheet_to_svg(sheets[1])          # wiring diagram is drawn inside a scaled group
+    svg = sheet_to_svg(sheets[2])          # wiring diagram is drawn inside a scaled group
     widths = {float(w) for w in __import__("re").findall(r'stroke-width="([\d.]+)"', svg)}
-    scaled_thin = round(THIN / sheets[1].root.items[-2].scale, 2)
+    scaled_thin = round(THIN / sheets[2].root.items[-2].scale, 2)
     assert any(abs(w - scaled_thin) < 0.02 for w in widths)
 
 
