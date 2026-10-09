@@ -118,7 +118,8 @@ def test_wiring_diagram_shows_groups_shields_and_splices():
     svg = sheet_to_svg(sheets[2])
     assert ">SP1<" in svg and ">M81824/1-1<" in svg       # splice node
     assert ">TSP1<" in svg and ">TP2<" in svg             # group labels
-    assert ">TSP1 SHIELD<" in svg and ">TSP1 SHLD<" in svg  # shield drain row on P2-11
+    assert svg.count(">TSP1 SHIELD<") == 2                 # drain row on P2-L, SHELL/ADPTR row at P1
+    assert ">ADPTR<" in svg                                # P1 has a backshell: shield to adapter
     assert "stroke-dasharray" in svg                       # dashed shield oval
     assert "LEGEND:" in svg
 

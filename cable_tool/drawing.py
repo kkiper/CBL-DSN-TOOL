@@ -47,6 +47,7 @@ from .canvas import Group, Sheet, fit_text, text_width
 from .inserts import face_view, layout_for
 from .model import (
     SHIELD_BACKSHELL,
+    SHIELD_FLOAT,
     UNIT_NAMES,
     CableDesign,
     ConnectorEnd,
@@ -676,17 +677,75 @@ class _Row:
     wire: Wire | None = None
     end_no: int = 0
     shield_of: str = ""
+    shell: bool = False           # a shield termination row: SHELL (connector shell) or ADPTR (backshell/adapter)
+
+    @property
+    def key(self) -> str:
+        """Lookup key of the row: its pin, or a per-shield key for a SHELL/ADPTR row (there can be several)."""
+        return f"#{self.pin}:{self.shield_of}" if self.shell else self.pin
 
 
-def _ground_symbol(g: Group, x: float, y: float, d: int) -> None:
-    """Chassis ground drawn sideways (lead along x) so it fits between pin rows."""
-    for k, h in enumerate((9.0, 6.0, 3.0)):
-        xx = x + d * k * 2.2
-        g.line(xx, y - h / 2, xx, y + h / 2, width=THICK)
+NEST_STEP = 22.0       # extra offset per nesting level, so an overall shield sits clear of the shields inside it
+CAPSULE_W = 12.0       # width of a shield / cable capsule
 
 
-NEST_STEP = 22.0       # extra offset per nesting level, so a shield's oval sits outside the ovals of the groups in it
-TIE_STEP = 7.0         # spacing of the tie lanes that join the ovals of one shield over non-adjacent wires
+def _capsule(g: Group, cx: float, top: float, bot: float, w: float, dashed: bool) -> None:
+    """A capsule (rounded bar) from ``top`` to ``bot``: how a shield (dashed) or a cable jacket is drawn."""
+    r = w / 2
+    pts = [(cx + r * math.cos(math.pi + math.pi * k / 8), top + r + r * math.sin(math.pi + math.pi * k / 8))
+           for k in range(9)]
+    pts += [(cx + r * math.cos(math.pi * k / 8), bot - r + r * math.sin(math.pi * k / 8)) for k in range(9)]
+    g.poly(pts, closed=True, width=THIN, dash=(2.5, 1.5) if dashed else None)
+
+
+def _shield_columns(design: CableDesign, ref: str, rows: list) -> dict[str, int]:
+    """Column of each group's capsules at connector ``ref`` (0 = nearest the connector). A group whose rows (and drain
+    lead) overlap another's vertically gets its own column, and a shield always sits outside every group inside it,
+    so capsules, joining lines and leads never run over each other."""
+    spans: dict[str, tuple[int, int]] = {}
+    gapped: dict[str, bool] = {}
+    for gr in design.groups:
+        gid = gr.group_id
+        member_ids = {w.wire_id for w in design.group_members(gid)}
+        idx = [i for i, row in enumerate(rows)
+               if (row.wire is not None and row.wire.wire_id in member_ids)
+               or (row.shield_of and gid in design.group_chain(row.shield_of))]
+        kind, pin = parse_shield_term(design.shield_term_at(gr, ref), ref)
+        if idx and kind == "PIN":     # the drain lead runs down (or up) the column to its pin's row
+            idx += [i for i, row in enumerate(rows) if row.pin == pin and row.wire is None]
+        if idx and (gr.shielded or gr.jacketed or gr.twisted):
+            spans[gid] = (min(idx), max(idx))
+            gapped[gid] = max(idx) - min(idx) + 1 > len(idx)
+    cols: dict[str, int] = {}
+    used: dict[int, list[tuple[int, int]]] = {}
+    # compact groups nearest the connector; a group split over non-adjacent rows further out, so its joining line
+    # doesn't cross the others' leads
+    for gid in sorted(spans, key=lambda g: (design.group_level(g), gapped[g], spans[g])):
+        lo, hi = spans[gid]
+        inner = [cols[k] for k in cols if k != gid and gid in design.group_chain(k)]
+        col = max(inner) + 1 if inner else 0
+        while any(not (hi < a or lo > b) for a, b in used.get(col, [])):
+            col += 1
+        cols[gid] = col
+        used.setdefault(col, []).append((lo, hi))
+    return cols
+
+
+def _shell_rows(design: CableDesign, ref: str, rows: list) -> list:
+    """``rows`` with a SHELL (or ADPTR, for a backshell) row for each shield terminated to ``ref``'s shell, placed
+    right under the shield's own rows; inner shields first, so an overall shield's row comes after theirs."""
+    label = "ADPTR" if design.shell_name(ref) == "BACKSHELL" else "SHELL"
+    out = list(rows)
+    for gr in sorted(design.shell_terminations(ref), key=lambda g: design.group_level(g.group_id)):
+        gid = gr.group_id
+        member_ids = {w.wire_id for w in design.group_members(gid)}
+        last = -1
+        for i, row in enumerate(out):
+            if (row.wire is not None and row.wire.wire_id in member_ids) or \
+                    (row.shield_of and gid in design.group_chain(row.shield_of)):
+                last = i
+        out.insert(last + 1 if last >= 0 else len(out), _Row(label, f"{gid} SHIELD", shield_of=gid, shell=True))
+    return out
 
 
 def _member_runs(pins: set[str], ref: str, row_index: dict, row_y: dict, inside=lambda row: False) -> list[list[float]]:
@@ -734,13 +793,15 @@ def wiring_diagram(design: CableDesign) -> Group:
             rows[c.ref] = sorted(rows[c.ref] + [_Row(p, NC) for p in nc], key=lambda r: key(r.pin))
         elif nc:
             rows[c.ref].append(_Row(NC, f"{len(nc)} POSITIONS, SEE NOTES"))
+    # Shields terminated to the shell: a SHELL / ADPTR row under each one's wires (IPC/WHMA-A-620 style)
+    for c in design.connectors:
+        rows[c.ref] = _shell_rows(design, c.ref, rows[c.ref])
 
     size, row_h = T, 14.0
     tag_end = max([60.0] + [text_width(wire_tag(w), T) + 10 for w in design.wires])
-    max_level = max([design.group_level(gr.group_id) for gr in design.groups if design.group_members(gr.group_id)],
-                    default=0)
-    n_tie = min(sum(1 for gr in design.groups if len(design.group_members(gr.group_id)) > 1), 6)
-    stub = max(90.0, tag_end + (44 + NEST_STEP * max_level + TIE_STEP * n_tie if has_groups else 8))
+    columns = {c.ref: _shield_columns(design, c.ref, rows[c.ref]) for c in design.connectors}
+    n_cols = max([max(cols.values(), default=0) for cols in columns.values()], default=0)
+    stub = max(90.0, tag_end + (40 + NEST_STEP * n_cols if has_groups else 8))
     oval_off = tag_end + 13
 
     def table_dims(c: ConnectorEnd):
@@ -791,20 +852,17 @@ def wiring_diagram(design: CableDesign) -> Group:
             edges[c.ref] = (edge, d)
             for r, row in enumerate(rs):
                 ry = y + r * row_h
-                row_index[(c.ref, row.pin)] = (r, rs)
+                row_index[(c.ref, row.key)] = (r, rs)
                 if r:
                     g.line(x, ry, x + tw, ry, width=THIN)
                 g.text(pin_x + pin_w / 2, ry + 10, row.pin, size=size, bold=True, anchor="middle")
                 g.text(sig_x + 4, ry + 10, fit_text(row.signal, size, sig_w - 8), size=size)
                 cy = ry + row_h / 2
-                row_y.setdefault((c.ref, row.pin), cy)
+                row_y.setdefault((c.ref, row.key), cy)
                 if row.wire is None and not row.shield_of:      # NC: no connection drawn
                     continue
                 g.circle(edge, cy, 1.3, fill="#000000", width=THIN)
-                if row.wire is None:
-                    shields.line(edge, cy, edge + d * (oval_off + 14), cy, width=THIN, dash=(3, 2))
-                    shields.text(edge + d * 5, cy - 2.5, f"{row.shield_of} SHLD", size=T,
-                                 anchor="start" if d == 1 else "end")
+                if row.wire is None:        # shield drain or SHELL/ADPTR row: the shield's lead comes in here
                     continue
                 tip = edge + d * stub
                 g.line(edge, cy, tip, cy, width=THIN)
@@ -852,68 +910,57 @@ def wiring_diagram(design: CableDesign) -> Group:
             g.text(x, y + 14, sp.splice_pn, size=T, anchor="middle")
 
     tied = False
-    tie_lanes: dict[str, int] = {}
     for gr in design.groups:
         members = design.group_members(gr.group_id)
         if not members:
             continue
         shielded = gr.shielded or "SHIELD" in gr.kind.upper()
-        level = design.group_level(gr.group_id)
+        if not (shielded or gr.jacketed or gr.twisted):
+            continue
+        gid = gr.group_id
+        level = design.group_level(gid)
         for ref, (edge, d) in edges.items():
             pins = {p for w in members for r, p in ((w.from_ref, w.from_pin), (w.to_ref, w.to_pin))
                     if r == ref and (ref, p) in row_y}
             if not pins:
                 continue
-            ox = edge + d * (oval_off + NEST_STEP * level)
-            rx = 7.0 + 2.0 * level
-            gid = gr.group_id
+            # inner shields close to the connector, each enclosing shield a column further out, so none overlap
+            ox = edge + d * (oval_off + NEST_STEP * columns.get(ref, {}).get(gid, level))
             runs = _member_runs(pins, ref, row_index, row_y,
                                 lambda row, gid=gid: bool(row.shield_of) and gid in design.group_chain(row.shield_of))
-            centers = []
+            spans = []
             for ys in runs:
-                top, bot = ys[0], ys[-1]
-                cy, ry = (top + bot) / 2, (bot - top) / 2 + 5.5 + 1.5 * level
-                centers.append(cy)
+                top, bot = ys[0] - 6 - 2 * level, ys[-1] + 6 + 2 * level
+                spans.append((top, bot))
                 if gr.twisted and len(ys) >= 2:
                     for y1, y2 in zip(ys, ys[1:]):
-                        shields.line(ox - 4, y1, ox + 4, y2, width=THIN)
-                        shields.line(ox - 4, y2, ox + 4, y1, width=THIN)
+                        shields.line(ox - 3.5, y1, ox + 3.5, y2, width=THIN)
+                        shields.line(ox - 3.5, y2, ox + 3.5, y1, width=THIN)
                 if shielded or gr.jacketed:
-                    shields.ellipse(ox, cy, rx, ry, width=THIN, dash=(2.5, 1.5) if shielded else None)
-            # members that aren't neighbours: one oval per run, joined by a tie line in a lane of its own outside
-            # every oval (the same shield or cable)
-            lead_x = ox + d * rx
-            if len(runs) > 1:
+                    _capsule(shields, ox, top, bot, CAPSULE_W, dashed=shielded)
+            # one shield over wires that aren't neighbours: its capsules are joined in the same column
+            for (_t1, b1), (t2, _b2) in zip(spans, spans[1:]):
                 tied = True
-                lane = tie_lanes.get(ref, 0)
-                tie_lanes[ref] = lane + 1
-                tie_x = edge + d * (oval_off + NEST_STEP * max_level + 14 + TIE_STEP * lane)
-                for cy in centers:
-                    shields.line(ox + d * rx, cy, tie_x, cy, width=THIN, dash=(2.5, 1.5))
-                    shields.circle(tie_x, cy, 1.2, fill="#000000", width=THIN)
-                shields.line(tie_x, centers[0], tie_x, centers[-1], width=THIN, dash=(2.5, 1.5))
-                lead_x = tie_x
-            if level:       # a shield over other groups: label above its oval, clear of the inner labels
-                shields.text(ox, runs[0][0] - 7.5 - 1.5 * level, gr.group_id, size=T, bold=True, anchor="middle")
-            else:
-                shields.text(ox + d * (rx + 2), runs[0][0] - 2.5, gr.group_id, size=T, bold=True,
-                             anchor="start" if d == 1 else "end")
+                shields.line(ox, b1, ox, t2, width=THIN, dash=(2.5, 1.5))
+            shields.text(ox, spans[0][0] - 2.5, gid, size=T, bold=True, anchor="middle")
             if not shielded:
                 continue
-            cy = centers[0]
+            # drain lead: out of the capsule, along its column, into the termination row
             kind, pin = parse_shield_term(design.shield_term_at(gr, ref), ref)
+            target = None
             if kind == SHIELD_BACKSHELL:
-                shields.line(lead_x, cy, lead_x + d * 7, cy, width=THIN, dash=(2, 1.5))
-                _ground_symbol(shields, lead_x + d * 7, cy, d)
-                if design.shell_name(ref) == "CONNECTOR SHELL":
-                    shields.text(lead_x + d * 18, cy + 2.5, "SHELL", size=T, anchor="start" if d == 1 else "end")
-            elif kind == "PIN" and (ref, pin) in row_y:
-                py = row_y[(ref, pin)]
-                jx = lead_x + d * 7
-                shields.poly([(lead_x, cy), (jx, cy), (jx, py)], width=THIN, dash=(2, 1.5))
-                shields.circle(jx, py, 1.4, fill="#000000", width=THIN)
+                target = row_y.get((ref, f"#{'ADPTR' if design.shell_name(ref) == 'BACKSHELL' else 'SHELL'}:{gid}"))
+            elif kind == "PIN":
+                target = row_y.get((ref, pin))
+            top, bot = spans[0][0], spans[-1][1]
+            if target is not None:
+                start = bot if target >= (top + bot) / 2 else top
+                shields.poly([(ox, start), (ox, target), (edge + d * 3, target)], width=THIN, dash=(2.5, 1.5))
+            elif kind == SHIELD_FLOAT:
+                shields.line(ox, bot, ox, bot + 5, width=THIN, dash=(2.5, 1.5))
+                shields.line(ox - 3.5, bot + 5, ox + 3.5, bot + 5, width=THICK)
             elif kind == "":
-                shields.text(lead_x + d * 3, cy + 2.5, "?", size=T, bold=True, anchor="start" if d == 1 else "end")
+                shields.text(ox, bot + 9, "?", size=T, bold=True, anchor="middle")
     g.add(shields)
 
     if has_groups:
@@ -924,21 +971,20 @@ def wiring_diagram(design: CableDesign) -> Group:
         lg.line(x, 0, x + 8, -6, width=THIN)
         lg.text(x + 12, 0, "TWISTED", size=T)
         x += 12 + text_width("TWISTED", T) + 16
-        lg.ellipse(x, -3, 5, 6, width=THIN, dash=(2.5, 1.5))
-        lg.text(x + 9, 0, "SHIELD", size=T)
-        x += 9 + text_width("SHIELD", T) + 16
-        lg.ellipse(x, -3, 5, 6, width=THIN)
-        lg.text(x + 9, 0, "JACKETED CABLE", size=T)
-        x += 9 + text_width("JACKETED CABLE", T) + 14
-        _ground_symbol(lg, x, -3, 1)
-        lg.text(x + 10, 0, "SHIELD TO BACKSHELL / SHELL", size=T)
-        x += 10 + text_width("SHIELD TO BACKSHELL / SHELL", T) + 14
+        _capsule(lg, x, -9, 3, 8, dashed=True)
+        lg.text(x + 8, 0, "SHIELD", size=T)
+        x += 8 + text_width("SHIELD", T) + 16
+        _capsule(lg, x, -9, 3, 8, dashed=False)
+        lg.text(x + 8, 0, "JACKETED CABLE", size=T)
+        x += 8 + text_width("JACKETED CABLE", T) + 16
+        lg.text(x, 0, "SHELL / ADPTR = SHIELD TERMINATED TO CONNECTOR SHELL / BACKSHELL (ADAPTER)", size=T)
+        x += text_width("SHELL / ADPTR = SHIELD TERMINATED TO CONNECTOR SHELL / BACKSHELL (ADAPTER)", T) + 16
         if tied:
-            lg.ellipse(x, -9, 4, 4, width=THIN, dash=(2.5, 1.5))
-            lg.ellipse(x, 3, 4, 4, width=THIN, dash=(2.5, 1.5))
-            lg.line(x + 7, -9, x + 7, 3, width=THIN, dash=(2.5, 1.5))
-            lg.text(x + 12, 0, "TIED = ONE SHIELD OVER NON-ADJACENT WIRES", size=T)
-            x += 12 + text_width("TIED = ONE SHIELD OVER NON-ADJACENT WIRES", T) + 14
+            _capsule(lg, x, -12, -5, 6, dashed=True)
+            lg.line(x, -5, x, 0, width=THIN, dash=(2.5, 1.5))
+            _capsule(lg, x, 0, 7, 6, dashed=True)
+            lg.text(x + 7, 0, "JOINED CAPSULES = ONE SHIELD OVER NON-ADJACENT WIRES", size=T)
+            x += 7 + text_width("JOINED CAPSULES = ONE SHIELD OVER NON-ADJACENT WIRES", T) + 16
         lg.text(x, 0, "? = SHIELD TERMINATION NOT SPECIFIED", size=T)
         lg.dx, lg.dy = 0.0, g.bounds()[3] + 18
         g.add(lg)

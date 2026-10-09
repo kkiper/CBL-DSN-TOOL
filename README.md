@@ -41,9 +41,14 @@ python -m cable_desktop                # or: python -m cable_desktop project.cbl
     gets a shield of its own inside that one.
   - *Add overall shield over the entire bundle* puts one shield over every wire, with the existing pairs, cables
     and shields nested inside it. The *Within* column of the groups table shows the nesting.
-  - Shields are drawn as dashed ovals around their wires next to each connector. When the shielded wires aren't
-    neighbours, each run of neighbouring wires gets its own oval, and a dashed tie line joins the ovals to show
-    they're one shield. The wiring diagram on the drawing uses the same convention.
+  - Shields are drawn as in the IPC/WHMA-A-620 wiring figures: a dashed capsule across the shield's wires next to
+    each connector. Inner shields and pairs sit nearest the connector. Each enclosing (overall) shield is a column
+    further out, so capsules never overlap. When the shielded wires aren't neighbours, each run of neighbouring
+    wires gets its own capsule, and the capsules are joined down their column (one shield).
+  - The drain leaves the bottom of the capsule, runs down its column and goes straight into its termination: the
+    SHELL port on the canvas, or a pin. On the wiring diagram each shield terminated to the shell gets its own row
+    under its wires: **SHELL** (connector shell) or **ADPTR** (backshell/adapter). A floating end gets a short
+    insulated stub.
 - **Shield terminations:** right-click a shield and choose *Terminate at P1*:
   - **Shell** goes to the connector's backshell, or to the connector shell if there's no backshell;
   - **Float** insulates the shield end;
@@ -54,7 +59,7 @@ python -m cable_desktop                # or: python -m cable_desktop project.cbl
   pins. It's switched on automatically when a shield is terminated to the shell, and wires can't connect to it.
 - **Pin order:** right-click a pin row and choose *Move pin up / down* to reorder the rows.
   *Arrange pins: keep each shield's wires together* puts each shield's, pair's and cable's pins next to each
-  other, so they draw as one oval. The wiring diagram tables use the same order.
+  other, so they draw as one capsule. The wiring diagram tables use the same order.
 - **Splices:** *+ Splice* or drop a splice part, then wire to it. Set *Near* / *Distance* in the *Splices* table to
   locate it.
 - **Tables** at the bottom show the same data as a spreadsheet. **Properties** (right) edits the selected item.

@@ -5,8 +5,9 @@
 * Drag parts from the library: a connector or splice part onto empty canvas adds one; a backshell, boot,
   label or contact onto a connector assigns it; a wire or cable part onto a wire assigns it.
 * Select wires and right-click to group them (twisted pair, shielded...), to put a shield over them, or to put an
-  overall shield over the whole bundle. Shields are drawn as dashed ovals around their wires next to each
-  connector; wires that aren't neighbours get one oval per run, joined by a dashed tie line (one shield).
+  overall shield over the whole bundle. Shields are drawn as dashed capsules across their wires next to each
+  connector, overall shields a column further out; wires that aren't neighbours get one capsule per run,
+  joined down the column (one shield).
 * Right-click a connector to show its SHELL connection; right-click a shield to terminate it at each end
   (SHELL, a pin, or floating) or remove it. Delete removes the selection.
 * Items with DRC errors are outlined red, warnings amber.
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cable_tool.drawing import assign_sides
+from cable_tool.drawing import _Row, _shield_columns, assign_sides
 from cable_tool.drc import ERROR, WARNING
 from cable_tool.edit import add_shield, remove_group, set_shield_term
 from cable_tool.inserts import layout_for
@@ -305,9 +306,14 @@ class WireItem(QGraphicsPathItem):
 
 
 class ShieldItem(QGraphicsPathItem):
-    """A shield (or overall shield) drawn next to each connector it reaches: a dashed oval around each run of
-    neighbouring member wires, a tie line joining the ovals when the members aren't neighbours, and a lead to
-    its termination (SHELL port, a pin) or a short insulated end when it floats."""
+    """A shield drawn as on a wiring diagram (IPC/WHMA-A-620 figures): a dashed capsule across its wires next to
+    each connector it reaches. Inner shields sit nearest the connector and each enclosing (overall) shield a column
+    further out, so capsules never overlap. A shield over wires that aren't neighbours has one capsule per run,
+    joined down its column. The drain leaves the bottom of the capsule and runs along its column, then straight
+    into its termination: the SHELL port or a pin. A floating end gets a short insulated stub."""
+
+    W = 12.0            # capsule width
+    COL0, COL_STEP = 34.0, 22.0
 
     def __init__(self, group: WireGroup, level: int):
         super().__init__()
@@ -325,65 +331,53 @@ class ShieldItem(QGraphicsPathItem):
         for lab in self.labels:
             scene.removeItem(lab)
         self.labels = []
-        pad = 7.0 + 5.0 * self.level
+        grow = 2.0 * self.level
         for ref in d.group_refs(self.gid):
             conn = scene.connectors.get(ref)
             if conn is None:
                 continue
-            # where each member wire leaves this connector, a little way out from the port
             pts: dict[str, QPointF] = {}
-            for item in scene.wires:
-                w = item.wire
-                if w.wire_id not in members or not item.isVisible():
-                    continue
-                for end, (r, pin) in enumerate(((w.from_ref, w.from_pin), (w.to_ref, w.to_pin))):
-                    if r == ref:
-                        t = 0.1 if end == 0 else 0.9
-                        pts.setdefault(pin, item.path().pointAtPercent(t))
+            for w in d.wires:
+                if w.wire_id in members:
+                    for r, pin in ((w.from_ref, w.from_pin), (w.to_ref, w.to_pin)):
+                        if r == ref and pin in conn.pins:
+                            pts.setdefault(pin, conn.port_pos(pin))
             if not pts:
                 continue
-            runs = self._runs(conn, pts, d, members)
-            rects = []
-            for run in runs:
-                xs = [pts[p].x() for p in run]
-                ys = [pts[p].y() for p in run]
-                rect = QRectF(min(xs) - pad, min(ys) - pad, max(xs) - min(xs) + 2 * pad, max(ys) - min(ys) + 2 * pad)
-                path.addEllipse(rect)
-                rects.append(rect)
             out = conn.side
-            edge = (max(r.right() for r in rects) if out == 1 else min(r.left() for r in rects))
-            lead = QPointF(edge, rects[0].center().y())
-            if len(rects) > 1:          # one shield over wires that aren't neighbours: tie the ovals together
-                tie_x = edge + out * (10 + 6 * self.level)
-                for r in rects:
-                    y = r.center().y()
-                    path.moveTo(r.right() if out == 1 else r.left(), y)
-                    path.lineTo(tie_x, y)
-                path.moveTo(tie_x, rects[0].center().y())
-                path.lineTo(tie_x, rects[-1].center().y())
-                lead = QPointF(tie_x, rects[0].center().y())
+            col = scene.shield_cols.get(ref, {}).get(self.gid, self.level)
+            x = conn.port_pos(conn.pins[0]).x() + out * (self.COL0 + self.COL_STEP * col)
+            spans = []
+            for run in self._runs(conn, pts, d, members):
+                ys = [pts[p].y() for p in run]
+                top, bot = min(ys) - 8 - grow, max(ys) + 8 + grow
+                path.addRoundedRect(QRectF(x - self.W / 2, top, self.W, bot - top), self.W / 2, self.W / 2)
+                spans.append((top, bot))
+            for (_t1, b1), (t2, _b2) in zip(spans, spans[1:]):     # one shield: join its capsules
+                path.moveTo(x, b1)
+                path.lineTo(x, t2)
+            top, bot = spans[0][0], spans[-1][1]
             kind, pin = parse_shield_term(d.shield_term_at(self.group, ref), ref)
             target = None
             if kind == SHIELD_BACKSHELL and conn.shell:
                 target = conn.port_pos(SHELL)
             elif kind == "PIN" and pin in conn.pins:
                 target = conn.port_pos(pin)
-            if target is not None:      # square lead: out, along to the port's row, back in to the port
-                lane_x = lead.x() + out * (12 + 5 * self.level)
-                path.moveTo(lead)
-                path.lineTo(lane_x, lead.y())
-                path.lineTo(lane_x, target.y())
-                path.lineTo(target)
+            if target is not None:
+                start = bot if target.y() >= (top + bot) / 2 else top
+                path.moveTo(x, start)
+                path.lineTo(x, target.y())
+                path.lineTo(target.x() + out * PORT_R, target.y())
             elif kind == SHIELD_FLOAT:
-                path.moveTo(lead)
-                path.lineTo(lead.x() + out * 8, lead.y())
-                path.moveTo(lead.x() + out * 8, lead.y() - 5)
-                path.lineTo(lead.x() + out * 8, lead.y() + 5)
+                path.moveTo(x, bot)
+                path.lineTo(x, bot + 7)
+                path.moveTo(x - 5, bot + 7)
+                path.lineTo(x + 5, bot + 7)
             text = self.gid + ("" if kind else " ?")
             lab = scene.addSimpleText(text, FONT)
             lab.setBrush(SHIELD_COLOR)
             lab.setZValue(1.6)
-            lab.setPos(rects[0].center().x() - lab.boundingRect().width() / 2, rects[0].top() - 15)
+            lab.setPos(x - lab.boundingRect().width() / 2, top - 16)
             self.labels.append(lab)
         self.setPath(path)
         self.restyle()
@@ -438,6 +432,7 @@ class HarnessScene(QGraphicsScene):
         self.splices: dict[str, SpliceItem] = {}
         self.wires: list[WireItem] = []
         self.shields: dict[str, ShieldItem] = {}
+        self.shield_cols: dict[str, dict[str, int]] = {}
         self.dragging = None        # (item, pin, start QPointF)
         self.rubber = None
         self._building = False
@@ -507,6 +502,18 @@ class HarnessScene(QGraphicsScene):
             if db == 0:
                 db = 1 if a.x() > b.x() else -1
             item.route(a, b, da, db)
+        d = self.doc.design
+        self.shield_cols = {}
+        for ref, conn in self.connectors.items():
+            rows = []
+            for pin in conn.pins:
+                wire = next((w for w in d.wires if (w.from_ref, w.from_pin) == (ref, pin)
+                             or (w.to_ref, w.to_pin) == (ref, pin)), None)
+                drain = next((g.group_id for g, p in d.shield_pins(ref) if p == pin), "")
+                rows.append(_Row(pin, "", wire, shield_of=drain if wire is None else ""))
+            if conn.shell:          # leads to the SHELL port run down their column to the bottom row
+                rows += [_Row(SHELL, "", None, shield_of=g.group_id, shell=True) for g in d.shell_terminations(ref)]
+            self.shield_cols[ref] = _shield_columns(d, ref, rows)
         for shield in self.shields.values():
             shield.layout(self)
 

@@ -76,13 +76,14 @@ def test_wiring_diagram_ties_non_adjacent_shield_and_uses_pin_order():
     set_shield_term(d, s1, "P1", "SHELL")
     sheets, _ = build_drawing(d)
     svg = sheet_to_svg(sheets[2])
-    assert "TIED = ONE SHIELD OVER NON-ADJACENT WIRES" in svg and f">{s1}<" in svg
+    assert "JOINED CAPSULES = ONE SHIELD OVER NON-ADJACENT WIRES" in svg and f">{s1}<" in svg
+    assert f">{s1} SHIELD<" in svg and ">ADPTR<" in svg      # its own termination row under its wires
     # put the members next to each other and the tie goes away
     d.connector("P1").pin_order = d.arranged_pins("P1", ["A", "B", "C", "D", "E", "F", "G", "H"])
     d.connector("P2").pin_order = d.arranged_pins("P2", ["A", "B", "C", "D", "E", "F", "G", "H"])
     assert d.connector("P1").pin_order[:2] == ["A", "G"]
     svg = sheet_to_svg(build_drawing(d)[0][2])
-    assert "TIED = ONE SHIELD" not in svg
+    assert "JOINED CAPSULES" not in svg
     assert svg.index(">DISCRETE IN 1<") < svg.index(">28V RTN<")       # P1-G now drawn right under P1-A
 
 
@@ -97,3 +98,24 @@ def test_round_trip_shell_parent_and_pin_order():
     wb, _ = load_design("x.xlsx", save_design(d))
     assert wb.connector("P1").show_shell and not wb.connector("P2").show_shell
     assert wb.group("TSP1").parent == s2 and wb.connector("P2").pin_order == ["B", "A"]
+
+
+def test_shell_rows_sit_under_their_shields_and_columns_do_not_overlap():
+    from cable_tool.drawing import _Row, _shell_rows, _shield_columns
+
+    d = two_connector_design()
+    d.connector("P1").backshell_pn = ""
+    s1 = add_shield(d, ["W1", "W2"])
+    s2 = add_shield(d, [w.wire_id for w in d.wires])
+    set_shield_term(d, s1, "P1", "SHELL")
+    set_shield_term(d, s2, "P1", "SHELL")
+    rows = []
+    for pin in "ABCDEFGHJKLM":
+        wire = next(w for w in d.wires if (w.from_ref, w.from_pin) == ("P1", pin) or (w.to_ref, w.to_pin) == ("P1", pin))
+        rows.append(_Row(pin, "", wire))
+    out = _shell_rows(d, "P1", rows)
+    labels = [(r.pin, r.shield_of) for r in out]
+    assert labels[2] == ("SHELL", s1)                        # right under A and B
+    assert labels.index(("SHELL", s2)) > labels.index(("SHELL", "TSP1"))     # overall shield's row comes last
+    cols = _shield_columns(d, "P1", out)
+    assert cols[s2] > max(cols[s1], cols["TSP1"], cols["TP2"])   # the overall shield sits outside the rest
